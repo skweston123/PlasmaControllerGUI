@@ -16,9 +16,9 @@ from typing import Optional
 
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QGridLayout, QPushButton, QLabel,
-                             QComboBox, QFrame, QScrollArea, QSizePolicy)
+                             QComboBox, QFrame, QScrollArea, QSizePolicy, QMessageBox)
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
-from PyQt5.QtGui import QFont, QPalette, QColor
+from PyQt5.QtGui import QFont, QPalette, QColor, QKeySequence
 
 
 @dataclass
@@ -116,11 +116,11 @@ class SerialInterface(QObject):
 class TouchButton(QPushButton):
     """Large touch-friendly button"""
 
-    def __init__(self, text, parent=None, height=50):
+    def __init__(self, text, parent=None, height=60):
         super().__init__(text, parent)
         self.setMinimumHeight(height)
         font = QFont()
-        font.setPointSize(11)
+        font.setPointSize(12)
         font.setBold(True)
         self.setFont(font)
 
@@ -128,7 +128,7 @@ class TouchButton(QPushButton):
 class StatusLabel(QLabel):
     """Status label with styling"""
 
-    def __init__(self, text="", bold=False, size=10):
+    def __init__(self, text="", bold=False, size=12):
         super().__init__(text)
         font = QFont()
         font.setPointSize(size)
@@ -150,38 +150,41 @@ class DropoutWidget(QFrame):
         self.setLineWidth(2)
 
         layout = QVBoxLayout()
-        layout.setSpacing(3)
-        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(5)
+        layout.setContentsMargins(8, 8, 8, 8)
 
         # Header
-        header = StatusLabel(f"Dropout {dropout_num}", bold=True, size=11)
+        header = StatusLabel(f"Dropout {dropout_num}", bold=True, size=14)
         layout.addWidget(header)
 
-        # State display
-        self.state_label = StatusLabel("UNKNOWN", bold=True, size=9)
+        # State display - larger font
+        self.state_label = StatusLabel("UNKNOWN", bold=True, size=13)
         layout.addWidget(self.state_label)
 
-        # Arm/Clamp status in compact format
+        # Arm/Clamp status - larger fonts
         status_layout = QHBoxLayout()
-        status_layout.setSpacing(2)
+        status_layout.setSpacing(5)
 
         arm_container = QVBoxLayout()
-        arm_container.setSpacing(0)
+        arm_container.setSpacing(2)
         arm_label = QLabel("ARM")
         arm_label.setAlignment(Qt.AlignCenter)
         font = QFont()
-        font.setPointSize(7)
+        font.setPointSize(10)
+        font.setBold(True)
         arm_label.setFont(font)
-        self.arm_value = StatusLabel("?", size=8)
+        self.arm_value = StatusLabel("?", size=12)
+        self.arm_value.setMinimumHeight(30)
         arm_container.addWidget(arm_label)
         arm_container.addWidget(self.arm_value)
 
         clamp_container = QVBoxLayout()
-        clamp_container.setSpacing(0)
+        clamp_container.setSpacing(2)
         clamp_label = QLabel("CLAMP")
         clamp_label.setAlignment(Qt.AlignCenter)
         clamp_label.setFont(font)
-        self.clamp_value = StatusLabel("?", size=8)
+        self.clamp_value = StatusLabel("?", size=12)
+        self.clamp_value.setMinimumHeight(30)
         clamp_container.addWidget(clamp_label)
         clamp_container.addWidget(self.clamp_value)
 
@@ -189,16 +192,16 @@ class DropoutWidget(QFrame):
         status_layout.addLayout(clamp_container)
         layout.addLayout(status_layout)
 
-        # Control buttons - compact
-        btn_up = TouchButton("UP", height=35)
+        # Control buttons - taller
+        btn_up = TouchButton("UP", height=50)
         btn_up.clicked.connect(self.cmd_up)
         layout.addWidget(btn_up)
 
-        btn_load = TouchButton("LOAD", height=35)
+        btn_load = TouchButton("LOAD", height=50)
         btn_load.clicked.connect(self.cmd_load)
         layout.addWidget(btn_load)
 
-        btn_down = TouchButton("DOWN", height=35)
+        btn_down = TouchButton("DOWN", height=50)
         btn_down.clicked.connect(self.cmd_down)
         layout.addWidget(btn_down)
 
@@ -217,8 +220,10 @@ class DropoutWidget(QFrame):
     def update_status(self, status: DropoutStatus):
         """Update display with new status"""
         self.state_label.setText(status.state)
-        self.arm_value.setText(status.arm_state[:4])  # Abbreviate
-        self.clamp_value.setText(status.clamp_state[:4])
+
+        # Show full text, not abbreviated
+        self.arm_value.setText(status.arm_state)
+        self.clamp_value.setText(status.clamp_state)
 
         # Color code the state
         if "IDLE" in status.state:
@@ -241,6 +246,9 @@ class TouchControlGUI(QMainWindow):
 
         self.setWindowTitle("Dropout Control")
         self.setGeometry(0, 0, 800, 480)
+
+        # Track fullscreen state
+        self.is_fullscreen = False
 
         # Set dark theme for better visibility
         self.set_dark_theme()
@@ -296,16 +304,18 @@ class TouchControlGUI(QMainWindow):
                 background-color: #454545;
                 border: 2px solid #666;
                 padding: 5px;
-                min-height: 30px;
+                min-height: 40px;
+                font-size: 11pt;
             }
             QComboBox::drop-down {
                 border: none;
+                width: 30px;
             }
             QComboBox::down-arrow {
                 image: none;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 5px solid white;
+                border-left: 6px solid transparent;
+                border-right: 6px solid transparent;
+                border-top: 6px solid white;
                 margin-right: 10px;
             }
         """)
@@ -331,15 +341,16 @@ class TouchControlGUI(QMainWindow):
         self.port_combo = QComboBox()
         self.port_combo.addItems(SerialInterface.list_ports())
         self.port_combo.setMinimumWidth(150)
+        self.port_combo.setMinimumHeight(50)
         conn_layout.addWidget(self.port_combo)
 
-        refresh_btn = TouchButton("↻", height=40)
-        refresh_btn.setMaximumWidth(50)
+        refresh_btn = TouchButton("↻", height=50)
+        refresh_btn.setMaximumWidth(60)
         refresh_btn.clicked.connect(self.refresh_ports)
         conn_layout.addWidget(refresh_btn)
 
-        self.connect_btn = TouchButton("Connect", height=40)
-        self.connect_btn.setMinimumWidth(100)
+        self.connect_btn = TouchButton("Connect", height=50)
+        self.connect_btn.setMinimumWidth(120)
         self.connect_btn.clicked.connect(self.toggle_connection)
         conn_layout.addWidget(self.connect_btn)
 
@@ -349,31 +360,33 @@ class TouchControlGUI(QMainWindow):
         # System status display (center)
         status_widget = QFrame()
         status_layout = QVBoxLayout()
-        status_layout.setContentsMargins(8, 3, 8, 3)
-        status_layout.setSpacing(2)
+        status_layout.setContentsMargins(10, 5, 10, 5)
+        status_layout.setSpacing(3)
 
-        self.estop_label = StatusLabel("● E-STOP", bold=True, size=12)
+        self.estop_label = StatusLabel("● E-STOP", bold=True, size=14)
         self.estop_label.setStyleSheet("color: red;")
         status_layout.addWidget(self.estop_label)
 
         bottom_status = QHBoxLayout()
-        bottom_status.setSpacing(10)
+        bottom_status.setSpacing(15)
 
-        self.mode_label = StatusLabel("AUTO", bold=True, size=10)
+        self.mode_label = StatusLabel("AUTO", bold=True, size=12)
         bottom_status.addWidget(self.mode_label)
 
         plasma_container = QHBoxLayout()
-        plasma_container.setSpacing(3)
+        plasma_container.setSpacing(5)
         plasma_label = QLabel("Plasma:")
-        plasma_label.setFont(QFont("Arial", 8))
-        self.plasma_indicator = StatusLabel("●", size=12)
+        plasma_font = QFont("Arial", 11)
+        plasma_font.setBold(True)
+        plasma_label.setFont(plasma_font)
+        self.plasma_indicator = StatusLabel("●", size=14)
         plasma_container.addWidget(plasma_label)
         plasma_container.addWidget(self.plasma_indicator)
         bottom_status.addLayout(plasma_container)
 
         status_layout.addLayout(bottom_status)
         status_widget.setLayout(status_layout)
-        status_widget.setMaximumWidth(200)
+        status_widget.setMaximumWidth(220)
         top_bar.addWidget(status_widget)
 
         # Mode and E-Stop buttons (right side)
@@ -382,15 +395,15 @@ class TouchControlGUI(QMainWindow):
         control_layout.setContentsMargins(5, 5, 5, 5)
         control_layout.setSpacing(5)
 
-        mode_btn = TouchButton("AUTO/\nMANUAL", height=40)
+        mode_btn = TouchButton("AUTO/\nMANUAL", height=50)
         mode_btn.clicked.connect(self.toggle_mode)
         control_layout.addWidget(mode_btn)
 
-        estop_btn = TouchButton("E-STOP", height=40)
+        estop_btn = TouchButton("E-STOP", height=50)
         estop_btn.setStyleSheet("""
             QPushButton {
                 background-color: #8B0000;
-                font-size: 14pt;
+                font-size: 16pt;
                 font-weight: bold;
             }
             QPushButton:pressed {
@@ -400,10 +413,28 @@ class TouchControlGUI(QMainWindow):
         estop_btn.clicked.connect(self.trigger_estop)
         control_layout.addWidget(estop_btn)
 
-        reset_btn = TouchButton("RESET", height=40)
-        reset_btn.setStyleSheet("background-color: #006400;")
+        reset_btn = TouchButton("RESET", height=50)
+        reset_btn.setStyleSheet("background-color: #006400; font-size: 14pt;")
         reset_btn.clicked.connect(self.reset_estop)
         control_layout.addWidget(reset_btn)
+
+        # Exit button (small, in corner)
+        exit_btn = QPushButton("✕")
+        exit_btn.setMaximumWidth(50)
+        exit_btn.setMinimumHeight(50)
+        exit_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2a2a2a;
+                color: #888;
+                font-size: 18pt;
+                border: 1px solid #555;
+            }
+            QPushButton:pressed {
+                background-color: #444;
+            }
+        """)
+        exit_btn.clicked.connect(self.confirm_exit)
+        control_layout.addWidget(exit_btn)
 
         control_widget.setLayout(control_layout)
         top_bar.addWidget(control_widget)
@@ -424,25 +455,41 @@ class TouchControlGUI(QMainWindow):
         # Plasma control panel
         plasma_panel = QFrame()
         plasma_layout = QVBoxLayout()
-        plasma_layout.setContentsMargins(5, 5, 5, 5)
-        plasma_layout.setSpacing(5)
+        plasma_layout.setContentsMargins(8, 8, 8, 8)
+        plasma_layout.setSpacing(8)
 
-        plasma_header = StatusLabel("PLASMA", bold=True, size=12)
+        plasma_header = StatusLabel("PLASMA", bold=True, size=14)
         plasma_layout.addWidget(plasma_header)
 
-        plasma_on_btn = TouchButton("ON", height=60)
-        plasma_on_btn.setStyleSheet("background-color: #2d5016;")
+        plasma_on_btn = TouchButton("ON", height=80)
+        plasma_on_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2d5016;
+                font-size: 16pt;
+            }
+            QPushButton:pressed {
+                background-color: #3d7020;
+            }
+        """)
         plasma_on_btn.clicked.connect(self.plasma_on)
         plasma_layout.addWidget(plasma_on_btn)
 
-        plasma_off_btn = TouchButton("OFF", height=60)
-        plasma_off_btn.setStyleSheet("background-color: #501616;")
+        plasma_off_btn = TouchButton("OFF", height=80)
+        plasma_off_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #501616;
+                font-size: 16pt;
+            }
+            QPushButton:pressed {
+                background-color: #702020;
+            }
+        """)
         plasma_off_btn.clicked.connect(self.plasma_off)
         plasma_layout.addWidget(plasma_off_btn)
 
         plasma_layout.addStretch()
         plasma_panel.setLayout(plasma_layout)
-        plasma_panel.setMaximumWidth(120)
+        plasma_panel.setMaximumWidth(140)
         middle_layout.addWidget(plasma_panel)
 
         main_layout.addLayout(middle_layout, stretch=1)
@@ -503,6 +550,45 @@ class TouchControlGUI(QMainWindow):
         """Request status update"""
         if self.serial.connected:
             self.serial.send_command("getstatus")
+
+    def confirm_exit(self):
+        """Confirm before exiting"""
+        reply = QMessageBox.question(
+            self,
+            'Exit Application',
+            'Are you sure you want to exit?',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            self.close()
+
+    def keyPressEvent(self, event):
+        """Handle keyboard shortcuts"""
+        # ESC key to exit fullscreen or close
+        if event.key() == Qt.Key_Escape:
+            if self.is_fullscreen:
+                self.showNormal()
+                self.is_fullscreen = False
+            else:
+                self.confirm_exit()
+
+        # F11 to toggle fullscreen
+        elif event.key() == Qt.Key_F11:
+            if self.is_fullscreen:
+                self.showNormal()
+                self.is_fullscreen = False
+            else:
+                self.showFullScreen()
+                self.is_fullscreen = True
+
+        # Ctrl+Q to quit
+        elif event.key() == Qt.Key_Q and event.modifiers() == Qt.ControlModifier:
+            self.confirm_exit()
+
+        else:
+            super().keyPressEvent(event)
 
     def process_status(self, data: dict):
         """Process status update from Arduino"""
@@ -568,6 +654,7 @@ def main():
     # Check for fullscreen argument
     if '--fullscreen' in sys.argv or '-f' in sys.argv:
         window.showFullScreen()
+        window.is_fullscreen = True
         # Hide cursor for kiosk mode
         if '--hide-cursor' in sys.argv:
             app.setOverrideCursor(Qt.BlankCursor)
