@@ -474,7 +474,7 @@ class HMIMainWindow(QMainWindow):
         dropout_layout = QHBoxLayout()
         dropout_layout.setSpacing(10)
 
-        self.btn_all_up = QPushButton("Arms Up\nClamps Closed")
+        self.btn_all_up = QPushButton("Arms Up &\nClamps Closed")
         self.btn_all_up.setFont(QFont("Arial", 15, QFont.Bold))
         self.btn_all_up.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_all_up.setStyleSheet("""
@@ -495,7 +495,7 @@ class HMIMainWindow(QMainWindow):
         """)
         self.btn_all_up.clicked.connect(lambda: self.arduino.send_command("all_up"))
 
-        self.btn_all_load = QPushButton("Arms Up\nClamps Open")
+        self.btn_all_load = QPushButton("Arms Up &\nClamps Open")
         self.btn_all_load.setFont(QFont("Arial", 15, QFont.Bold))
         self.btn_all_load.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_all_load.setStyleSheet("""
@@ -516,7 +516,7 @@ class HMIMainWindow(QMainWindow):
         """)
         self.btn_all_load.clicked.connect(lambda: self.arduino.send_command("all_load"))
 
-        self.btn_all_down = QPushButton("Arms Down\nClamps Open")
+        self.btn_all_down = QPushButton("Arms Down &\nClamps Open")
         self.btn_all_down.setFont(QFont("Arial", 15, QFont.Bold))
         self.btn_all_down.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_all_down.setStyleSheet("""
