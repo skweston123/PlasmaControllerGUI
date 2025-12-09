@@ -151,7 +151,6 @@ class HMIMainWindow(QMainWindow):
 
         # Current mode
         self.current_mode = "AUTO"  # AUTO, MANUAL
-        self.selected_dropout = "ALL"  # ALL, 1, 2, 3, 4
 
         self.init_ui()
 
@@ -215,15 +214,61 @@ class HMIMainWindow(QMainWindow):
         self.status_widget = self.create_status_display()
         main_layout.addWidget(self.status_widget)
 
-        # Control panel (changes based on mode)
-        self.control_widget = QWidget()
-        self.control_layout = QVBoxLayout()
-        self.control_layout.setSpacing(15)
-        self.control_widget.setLayout(self.control_layout)
-        main_layout.addWidget(self.control_widget, stretch=1)
+        # Mode selection
+        mode_group = QGroupBox("Mode Selection")
+        mode_group.setFont(QFont("Arial", 14, QFont.Bold))
+        mode_layout = QHBoxLayout()
+        mode_layout.setSpacing(30)
 
-        # Initialize in auto mode
-        self.update_control_panel()
+        self.auto_radio = QRadioButton("Auto Process")
+        self.auto_radio.setChecked(True)
+        self.auto_radio.setFont(QFont("Arial", 16))
+        self.auto_radio.toggled.connect(self.mode_changed)
+
+        self.manual_radio = QRadioButton("Manual Control")
+        self.manual_radio.setFont(QFont("Arial", 16))
+        self.manual_radio.toggled.connect(self.mode_changed)
+
+        mode_layout.addWidget(self.auto_radio)
+        mode_layout.addWidget(self.manual_radio)
+        mode_layout.addStretch()
+        mode_group.setLayout(mode_layout)
+        main_layout.addWidget(mode_group)
+
+        # Create both control sections
+        controls_layout = QHBoxLayout()
+        controls_layout.setSpacing(15)
+
+        # Auto process controls (left side)
+        self.create_auto_controls(controls_layout)
+
+        # Manual controls (right side)
+        self.create_manual_controls(controls_layout)
+
+        main_layout.addLayout(controls_layout)
+
+        # Reset button at bottom
+        reset_btn = QPushButton("Reset System")
+        reset_btn.setFont(QFont("Arial", 16, QFont.Bold))
+        reset_btn.setFixedHeight(80)
+        reset_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #ff6600;
+                color: white;
+                border-radius: 10px;
+                border: 3px solid #cc5200;
+            }
+            QPushButton:pressed {
+                background-color: #cc5200;
+            }
+        """)
+        reset_btn.clicked.connect(self.reset_system)
+        main_layout.addWidget(reset_btn)
+
+        main_layout.addStretch()
+
+        # Update button states based on mode
+        self.update_button_states()
 
     def create_status_display(self):
         """Create status display widget"""
@@ -273,13 +318,11 @@ class HMIMainWindow(QMainWindow):
         self.plasma_status_label.setStyleSheet("color: gray; padding: 5px;")
         status_layout.addWidget(self.plasma_status_label, 0, 5, Qt.AlignLeft)
 
-        # Dropout states header
+        # Dropout states
         dropout_header_font = QFont("Arial", 14, QFont.Bold)
 
-        # Dropout states
         self.dropout_labels = []
         for i in range(4):
-            # Create a container for each dropout
             col_offset = i * 2
 
             dropout_label = QLabel(f"DROPOUT {i + 1}:")
@@ -299,308 +342,110 @@ class HMIMainWindow(QMainWindow):
 
         return status_frame
 
-    def update_control_panel(self):
-        """Update control panel based on mode and state"""
-        # Clear existing controls
-        for i in reversed(range(self.control_layout.count())):
-            widget = self.control_layout.itemAt(i).widget()
-            if widget:
-                widget.setParent(None)
+    def create_auto_controls(self, parent_layout):
+        """Create auto process controls"""
+        auto_group = QGroupBox("Auto Process Controls")
+        auto_group.setFont(QFont("Arial", 14, QFont.Bold))
+        auto_layout = QVBoxLayout()
+        auto_layout.setSpacing(15)
 
-        if self.current_mode == "AUTO":
-            self.create_auto_mode_controls()
-        else:
-            self.create_manual_mode_controls()
-
-    def create_auto_mode_controls(self):
-        """Create controls for auto mode"""
-        # Mode selection
-        mode_group = QGroupBox("Mode Selection")
-        mode_group.setFont(QFont("Arial", 14, QFont.Bold))
-        mode_layout = QHBoxLayout()
-        mode_layout.setSpacing(30)
-
-        self.auto_radio = QRadioButton("Auto Process")
-        self.auto_radio.setChecked(True)
-        self.auto_radio.setFont(QFont("Arial", 16))
-        self.auto_radio.toggled.connect(self.mode_changed)
-
-        self.manual_radio = QRadioButton("Manual Control")
-        self.manual_radio.setFont(QFont("Arial", 16))
-        self.manual_radio.toggled.connect(self.mode_changed)
-
-        mode_layout.addWidget(self.auto_radio)
-        mode_layout.addWidget(self.manual_radio)
-        mode_layout.addStretch()
-        mode_group.setLayout(mode_layout)
-        self.control_layout.addWidget(mode_group)
-
-        # Process controls (based on current state)
-        process_group = QGroupBox("Process Controls")
-        process_group.setFont(QFont("Arial", 14, QFont.Bold))
-        process_layout = QVBoxLayout()
-        process_layout.setSpacing(15)
-
-        if self.status.process_state == "OFF":
-            btn = QPushButton("Begin Auto Treatment")
-            btn.setFont(QFont("Arial", 18, QFont.Bold))
-            btn.setFixedHeight(100)
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #0066cc;
-                    color: white;
-                    border-radius: 10px;
-                    border: 3px solid #004499;
-                }
-                QPushButton:pressed {
-                    background-color: #004499;
-                }
-            """)
-            btn.clicked.connect(self.begin_auto_treatment)
-            process_layout.addWidget(btn)
-
-        elif self.status.process_state == "LOADING":
-            btn_layout = QHBoxLayout()
-            btn_layout.setSpacing(15)
-
-            btn_loaded = QPushButton("Part Loaded")
-            btn_loaded.setFont(QFont("Arial", 18, QFont.Bold))
-            btn_loaded.setFixedHeight(100)
-            btn_loaded.setStyleSheet("""
-                QPushButton {
-                    background-color: #00aa00;
-                    color: white;
-                    border-radius: 10px;
-                    border: 3px solid #008800;
-                }
-                QPushButton:pressed {
-                    background-color: #008800;
-                }
-            """)
-            btn_loaded.clicked.connect(lambda: self.arduino.send_command("part_loaded"))
-            btn_layout.addWidget(btn_loaded)
-
-            btn_exit = QPushButton("Exit Process")
-            btn_exit.setFont(QFont("Arial", 18, QFont.Bold))
-            btn_exit.setFixedHeight(100)
-            btn_exit.setStyleSheet("""
-                QPushButton {
-                    background-color: #666666;
-                    color: white;
-                    border-radius: 10px;
-                    border: 3px solid #444444;
-                }
-                QPushButton:pressed {
-                    background-color: #444444;
-                }
-            """)
-            btn_exit.clicked.connect(self.exit_process)
-            btn_layout.addWidget(btn_exit)
-
-            process_layout.addLayout(btn_layout)
-
-        elif self.status.process_state == "READY":
-            btn = QPushButton("Start Treatment")
-            btn.setFont(QFont("Arial", 18, QFont.Bold))
-            btn.setFixedHeight(100)
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #0066cc;
-                    color: white;
-                    border-radius: 10px;
-                    border: 3px solid #004499;
-                }
-                QPushButton:pressed {
-                    background-color: #004499;
-                }
-            """)
-            btn.clicked.connect(lambda: self.arduino.send_command("start_treatment"))
-            process_layout.addWidget(btn)
-
-        elif self.status.process_state == "UNLOADING":
-            btn_unloaded = QPushButton("Part Unloaded")
-            btn_unloaded.setFont(QFont("Arial", 18, QFont.Bold))
-            btn_unloaded.setFixedHeight(100)
-            btn_unloaded.setStyleSheet("""
-                QPushButton {
-                    background-color: #00aa00;
-                    color: white;
-                    border-radius: 10px;
-                    border: 3px solid #008800;
-                }
-                QPushButton:pressed {
-                    background-color: #008800;
-                }
-            """)
-            btn_unloaded.clicked.connect(lambda: self.arduino.send_command("part_unloaded"))
-            process_layout.addWidget(btn_unloaded)
-
-        else:
-            # TREATING, DROPPING, RETURNING - no controls available
-            label = QLabel(f"Process Running: {self.status.process_state}")
-            label.setFont(QFont("Arial", 18, QFont.Bold))
-            label.setAlignment(Qt.AlignCenter)
-            label.setStyleSheet("color: #0066cc; padding: 40px;")
-            process_layout.addWidget(label)
-
-        process_group.setLayout(process_layout)
-        self.control_layout.addWidget(process_group)
-
-        # Reset button
-        reset_btn = QPushButton("Reset System")
-        reset_btn.setFont(QFont("Arial", 16, QFont.Bold))
-        reset_btn.setFixedHeight(80)
-        reset_btn.setStyleSheet("""
+        # Begin Auto Treatment button
+        self.btn_begin = QPushButton("Begin Auto Treatment")
+        self.btn_begin.setFont(QFont("Arial", 18, QFont.Bold))
+        self.btn_begin.setFixedHeight(100)
+        self.btn_begin.setStyleSheet("""
             QPushButton {
-                background-color: #ff6600;
+                background-color: #0066cc;
                 color: white;
                 border-radius: 10px;
-                border: 3px solid #cc5200;
+                border: 3px solid #004499;
             }
             QPushButton:pressed {
-                background-color: #cc5200;
+                background-color: #004499;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #888888;
+                border: 3px solid #aaaaaa;
             }
         """)
-        reset_btn.clicked.connect(self.reset_system)
-        self.control_layout.addWidget(reset_btn)
+        self.btn_begin.clicked.connect(self.begin_auto_treatment)
+        auto_layout.addWidget(self.btn_begin)
 
-        self.control_layout.addStretch()
-
-    def create_manual_mode_controls(self):
-        """Create controls for manual mode"""
-        # Mode selection
-        mode_group = QGroupBox("Mode Selection")
-        mode_group.setFont(QFont("Arial", 14, QFont.Bold))
-        mode_layout = QHBoxLayout()
-        mode_layout.setSpacing(30)
-
-        self.auto_radio = QRadioButton("Auto Process")
-        self.auto_radio.setFont(QFont("Arial", 16))
-        self.auto_radio.toggled.connect(self.mode_changed)
-
-        self.manual_radio = QRadioButton("Manual Control")
-        self.manual_radio.setChecked(True)
-        self.manual_radio.setFont(QFont("Arial", 16))
-        self.manual_radio.toggled.connect(self.mode_changed)
-
-        mode_layout.addWidget(self.auto_radio)
-        mode_layout.addWidget(self.manual_radio)
-        mode_layout.addStretch()
-        mode_group.setLayout(mode_layout)
-        self.control_layout.addWidget(mode_group)
-
-        # Dropout selection
-        dropout_group = QGroupBox("Dropout Selection")
-        dropout_group.setFont(QFont("Arial", 14, QFont.Bold))
-        dropout_layout = QHBoxLayout()
-        dropout_layout.setSpacing(20)
-
-        self.dropout_button_group = QButtonGroup()
-
-        for option in ["ALL", "1", "2", "3", "4"]:
-            radio = QRadioButton(f"Dropout {option}" if option != "ALL" else "All Dropouts")
-            radio.setFont(QFont("Arial", 14))
-            radio.toggled.connect(lambda checked, opt=option: self.dropout_selection_changed(opt, checked))
-            self.dropout_button_group.addButton(radio)
-            dropout_layout.addWidget(radio)
-            if option == "ALL":
-                radio.setChecked(True)
-
-        dropout_layout.addStretch()
-        dropout_group.setLayout(dropout_layout)
-        self.control_layout.addWidget(dropout_group)
-
-        # Manual controls
-        manual_group = QGroupBox("Manual Controls")
-        manual_group.setFont(QFont("Arial", 14, QFont.Bold))
-        manual_layout = QHBoxLayout()
-        manual_layout.setSpacing(15)
-
-        btn_up = QPushButton("Up")
-        btn_up.setFont(QFont("Arial", 18, QFont.Bold))
-        btn_up.setFixedHeight(100)
-        btn_up.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        btn_up.setStyleSheet("""
+        # Part Loaded button
+        self.btn_part_loaded = QPushButton("Part Loaded")
+        self.btn_part_loaded.setFont(QFont("Arial", 18, QFont.Bold))
+        self.btn_part_loaded.setFixedHeight(100)
+        self.btn_part_loaded.setStyleSheet("""
             QPushButton {
-                background-color: #4CAF50;
+                background-color: #00aa00;
                 color: white;
                 border-radius: 10px;
-                border: 3px solid #388E3C;
+                border: 3px solid #008800;
             }
             QPushButton:pressed {
-                background-color: #388E3C;
+                background-color: #008800;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #888888;
+                border: 3px solid #aaaaaa;
             }
         """)
-        btn_up.clicked.connect(self.command_up)
+        self.btn_part_loaded.clicked.connect(lambda: self.arduino.send_command("part_loaded"))
+        auto_layout.addWidget(self.btn_part_loaded)
 
-        btn_load = QPushButton("Load")
-        btn_load.setFont(QFont("Arial", 18, QFont.Bold))
-        btn_load.setFixedHeight(100)
-        btn_load.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        btn_load.setStyleSheet("""
+        # Start Treatment button
+        self.btn_start_treatment = QPushButton("Start Treatment")
+        self.btn_start_treatment.setFont(QFont("Arial", 18, QFont.Bold))
+        self.btn_start_treatment.setFixedHeight(100)
+        self.btn_start_treatment.setStyleSheet("""
             QPushButton {
-                background-color: #2196F3;
+                background-color: #0066cc;
                 color: white;
                 border-radius: 10px;
-                border: 3px solid #1976D2;
+                border: 3px solid #004499;
             }
             QPushButton:pressed {
-                background-color: #1976D2;
+                background-color: #004499;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #888888;
+                border: 3px solid #aaaaaa;
             }
         """)
-        btn_load.clicked.connect(self.command_load)
+        self.btn_start_treatment.clicked.connect(lambda: self.arduino.send_command("start_treatment"))
+        auto_layout.addWidget(self.btn_start_treatment)
 
-        btn_down = QPushButton("Down")
-        btn_down.setFont(QFont("Arial", 18, QFont.Bold))
-        btn_down.setFixedHeight(100)
-        btn_down.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        btn_down.setStyleSheet("""
+        # Part Unloaded button
+        self.btn_part_unloaded = QPushButton("Part Unloaded")
+        self.btn_part_unloaded.setFont(QFont("Arial", 18, QFont.Bold))
+        self.btn_part_unloaded.setFixedHeight(100)
+        self.btn_part_unloaded.setStyleSheet("""
             QPushButton {
-                background-color: #FF9800;
+                background-color: #00aa00;
                 color: white;
                 border-radius: 10px;
-                border: 3px solid #F57C00;
+                border: 3px solid #008800;
             }
             QPushButton:pressed {
-                background-color: #F57C00;
+                background-color: #008800;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #888888;
+                border: 3px solid #aaaaaa;
             }
         """)
-        btn_down.clicked.connect(self.command_down)
+        self.btn_part_unloaded.clicked.connect(lambda: self.arduino.send_command("part_unloaded"))
+        auto_layout.addWidget(self.btn_part_unloaded)
 
-        manual_layout.addWidget(btn_up)
-        manual_layout.addWidget(btn_load)
-        manual_layout.addWidget(btn_down)
-        manual_group.setLayout(manual_layout)
-        self.control_layout.addWidget(manual_group)
-
-        # Plasma controls
-        plasma_group = QGroupBox("Plasma Controls")
-        plasma_group.setFont(QFont("Arial", 14, QFont.Bold))
-        plasma_layout = QHBoxLayout()
-        plasma_layout.setSpacing(15)
-
-        btn_plasma_on = QPushButton("Plasma ON")
-        btn_plasma_on.setFont(QFont("Arial", 18, QFont.Bold))
-        btn_plasma_on.setFixedHeight(80)
-        btn_plasma_on.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        btn_plasma_on.setStyleSheet("""
-            QPushButton {
-                background-color: #9C27B0;
-                color: white;
-                border-radius: 10px;
-                border: 3px solid #7B1FA2;
-            }
-            QPushButton:pressed {
-                background-color: #7B1FA2;
-            }
-        """)
-        btn_plasma_on.clicked.connect(lambda: self.arduino.send_command("plasma_on"))
-
-        btn_plasma_off = QPushButton("Plasma OFF")
-        btn_plasma_off.setFont(QFont("Arial", 18, QFont.Bold))
-        btn_plasma_off.setFixedHeight(80)
-        btn_plasma_off.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        btn_plasma_off.setStyleSheet("""
+        # Exit Process button
+        self.btn_exit_process = QPushButton("Exit Process")
+        self.btn_exit_process.setFont(QFont("Arial", 18, QFont.Bold))
+        self.btn_exit_process.setFixedHeight(100)
+        self.btn_exit_process.setStyleSheet("""
             QPushButton {
                 background-color: #666666;
                 color: white;
@@ -610,33 +455,156 @@ class HMIMainWindow(QMainWindow):
             QPushButton:pressed {
                 background-color: #444444;
             }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #888888;
+                border: 3px solid #aaaaaa;
+            }
         """)
-        btn_plasma_off.clicked.connect(lambda: self.arduino.send_command("plasma_off"))
+        self.btn_exit_process.clicked.connect(self.exit_process)
+        auto_layout.addWidget(self.btn_exit_process)
 
-        plasma_layout.addWidget(btn_plasma_on)
-        plasma_layout.addWidget(btn_plasma_off)
-        plasma_group.setLayout(plasma_layout)
-        self.control_layout.addWidget(plasma_group)
+        auto_layout.addStretch()
+        auto_group.setLayout(auto_layout)
+        parent_layout.addWidget(auto_group)
 
-        # Reset button
-        reset_btn = QPushButton("Reset System")
-        reset_btn.setFont(QFont("Arial", 16, QFont.Bold))
-        reset_btn.setFixedHeight(80)
-        reset_btn.setStyleSheet("""
+    def create_manual_controls(self, parent_layout):
+        """Create manual controls"""
+        manual_group = QGroupBox("Manual Controls")
+        manual_group.setFont(QFont("Arial", 14, QFont.Bold))
+        manual_layout = QVBoxLayout()
+        manual_layout.setSpacing(15)
+
+        # All dropouts controls
+        dropout_layout = QHBoxLayout()
+        dropout_layout.setSpacing(15)
+
+        self.btn_all_up = QPushButton("All Up")
+        self.btn_all_up.setFont(QFont("Arial", 18, QFont.Bold))
+        self.btn_all_up.setFixedHeight(100)
+        self.btn_all_up.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.btn_all_up.setStyleSheet("""
             QPushButton {
-                background-color: #ff6600;
+                background-color: #4CAF50;
                 color: white;
                 border-radius: 10px;
-                border: 3px solid #cc5200;
+                border: 3px solid #388E3C;
             }
             QPushButton:pressed {
-                background-color: #cc5200;
+                background-color: #388E3C;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #888888;
+                border: 3px solid #aaaaaa;
             }
         """)
-        reset_btn.clicked.connect(self.reset_system)
-        self.control_layout.addWidget(reset_btn)
+        self.btn_all_up.clicked.connect(lambda: self.arduino.send_command("all_up"))
 
-        self.control_layout.addStretch()
+        self.btn_all_load = QPushButton("All Load")
+        self.btn_all_load.setFont(QFont("Arial", 18, QFont.Bold))
+        self.btn_all_load.setFixedHeight(100)
+        self.btn_all_load.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.btn_all_load.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border-radius: 10px;
+                border: 3px solid #1976D2;
+            }
+            QPushButton:pressed {
+                background-color: #1976D2;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #888888;
+                border: 3px solid #aaaaaa;
+            }
+        """)
+        self.btn_all_load.clicked.connect(lambda: self.arduino.send_command("all_load"))
+
+        self.btn_all_down = QPushButton("All Down")
+        self.btn_all_down.setFont(QFont("Arial", 18, QFont.Bold))
+        self.btn_all_down.setFixedHeight(100)
+        self.btn_all_down.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.btn_all_down.setStyleSheet("""
+            QPushButton {
+                background-color: #FF9800;
+                color: white;
+                border-radius: 10px;
+                border: 3px solid #F57C00;
+            }
+            QPushButton:pressed {
+                background-color: #F57C00;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #888888;
+                border: 3px solid #aaaaaa;
+            }
+        """)
+        self.btn_all_down.clicked.connect(lambda: self.arduino.send_command("all_down"))
+
+        dropout_layout.addWidget(self.btn_all_up)
+        dropout_layout.addWidget(self.btn_all_load)
+        dropout_layout.addWidget(self.btn_all_down)
+        manual_layout.addLayout(dropout_layout)
+
+        # Plasma controls
+        plasma_layout = QHBoxLayout()
+        plasma_layout.setSpacing(15)
+
+        self.btn_plasma_on = QPushButton("Plasma ON")
+        self.btn_plasma_on.setFont(QFont("Arial", 18, QFont.Bold))
+        self.btn_plasma_on.setFixedHeight(100)
+        self.btn_plasma_on.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.btn_plasma_on.setStyleSheet("""
+            QPushButton {
+                background-color: #9C27B0;
+                color: white;
+                border-radius: 10px;
+                border: 3px solid #7B1FA2;
+            }
+            QPushButton:pressed {
+                background-color: #7B1FA2;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #888888;
+                border: 3px solid #aaaaaa;
+            }
+        """)
+        self.btn_plasma_on.clicked.connect(lambda: self.arduino.send_command("plasma_on"))
+
+        self.btn_plasma_off = QPushButton("Plasma OFF")
+        self.btn_plasma_off.setFont(QFont("Arial", 18, QFont.Bold))
+        self.btn_plasma_off.setFixedHeight(100)
+        self.btn_plasma_off.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.btn_plasma_off.setStyleSheet("""
+            QPushButton {
+                background-color: #666666;
+                color: white;
+                border-radius: 10px;
+                border: 3px solid #444444;
+            }
+            QPushButton:pressed {
+                background-color: #444444;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #888888;
+                border: 3px solid #aaaaaa;
+            }
+        """)
+        self.btn_plasma_off.clicked.connect(lambda: self.arduino.send_command("plasma_off"))
+
+        plasma_layout.addWidget(self.btn_plasma_on)
+        plasma_layout.addWidget(self.btn_plasma_off)
+        manual_layout.addLayout(plasma_layout)
+
+        manual_layout.addStretch()
+        manual_group.setLayout(manual_layout)
+        parent_layout.addWidget(manual_group)
 
     def mode_changed(self):
         """Handle mode change"""
@@ -645,15 +613,40 @@ class HMIMainWindow(QMainWindow):
                 self.current_mode = "AUTO"
             else:
                 self.current_mode = "MANUAL"
-            self.update_control_panel()
+            self.update_button_states()
         except Exception as e:
             print(f"Error changing mode: {e}")
             QMessageBox.warning(self, "Error", f"Error changing mode: {e}")
 
-    def dropout_selection_changed(self, option, checked):
-        """Handle dropout selection change"""
-        if checked:
-            self.selected_dropout = option
+    def update_button_states(self):
+        """Update button enabled/disabled states based on mode and process state"""
+        # Get current states
+        is_auto = self.current_mode == "AUTO"
+        process_state = self.status.process_state
+
+        # Auto process buttons - enabled only in auto mode
+        if is_auto:
+            # Enable buttons based on process state
+            self.btn_begin.setEnabled(process_state == "OFF")
+            self.btn_part_loaded.setEnabled(process_state == "LOADING")
+            self.btn_start_treatment.setEnabled(process_state == "READY")
+            self.btn_part_unloaded.setEnabled(process_state == "UNLOADING")
+            self.btn_exit_process.setEnabled(process_state == "LOADING")
+        else:
+            # Disable all auto buttons in manual mode
+            self.btn_begin.setEnabled(False)
+            self.btn_part_loaded.setEnabled(False)
+            self.btn_start_treatment.setEnabled(False)
+            self.btn_part_unloaded.setEnabled(False)
+            self.btn_exit_process.setEnabled(False)
+
+        # Manual control buttons - enabled only in manual mode
+        manual_enabled = not is_auto
+        self.btn_all_up.setEnabled(manual_enabled)
+        self.btn_all_load.setEnabled(manual_enabled)
+        self.btn_all_down.setEnabled(manual_enabled)
+        self.btn_plasma_on.setEnabled(manual_enabled)
+        self.btn_plasma_off.setEnabled(manual_enabled)
 
     def trigger_estop(self):
         """Trigger emergency stop"""
@@ -674,36 +667,6 @@ class HMIMainWindow(QMainWindow):
         """Reset system"""
         self.arduino.send_command("reset")
 
-    def command_up(self):
-        """Command selected dropout(s) up"""
-        if not self.arduino.connected:
-            QMessageBox.warning(self, "Not Connected", "Arduino not connected.")
-            return
-        if self.selected_dropout == "ALL":
-            self.arduino.send_command("all_up")
-        else:
-            self.arduino.send_command(f"{self.selected_dropout}_up")
-
-    def command_load(self):
-        """Command selected dropout(s) to load position"""
-        if not self.arduino.connected:
-            QMessageBox.warning(self, "Not Connected", "Arduino not connected.")
-            return
-        if self.selected_dropout == "ALL":
-            self.arduino.send_command("all_load")
-        else:
-            self.arduino.send_command(f"{self.selected_dropout}_load")
-
-    def command_down(self):
-        """Command selected dropout(s) down"""
-        if not self.arduino.connected:
-            QMessageBox.warning(self, "Not Connected", "Arduino not connected.")
-            return
-        if self.selected_dropout == "ALL":
-            self.arduino.send_command("all_down")
-        else:
-            self.arduino.send_command(f"{self.selected_dropout}_down")
-
     def request_status_update(self):
         """Request status update from Arduino"""
         if self.arduino.connected:
@@ -716,10 +679,9 @@ class HMIMainWindow(QMainWindow):
             self.status.update_from_serial(line)
             self.update_status_display()
 
-            # Update control panel if process state changed
+            # Update button states if process state changed
             if line in ["OFF", "LOADING", "READY", "TREATING", "UNLOADING", "DROPPING", "RETURNING"]:
-                if self.current_mode == "AUTO":
-                    self.update_control_panel()
+                self.update_button_states()
         except Exception as e:
             print(f"Error handling serial data: {e}")
 
