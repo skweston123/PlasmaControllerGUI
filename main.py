@@ -116,19 +116,43 @@ class SystemStatus:
 
     def update_from_serial(self, line):
         """Parse serial data and update status"""
-        line = line.upper().strip()
+        line = line.strip()
+        line_upper = line.upper()
 
         # Process state updates
-        if line in ["OFF", "LOADING", "READY", "TREATING", "UNLOADING", "DROPPING", "RETURNING"]:
-            self.process_state = line
+        if line_upper in ["OFF", "LOADING", "READY", "TREATING", "UNLOADING", "DROPPING", "RETURNING"]:
+            self.process_state = line_upper
 
-        # E-stop status
-        elif "ESTOP ACTIVE" in line:
+        # E-stop status - be more specific
+        elif "ESTOP ACTIVE" in line_upper or "ESTOP:ACTIVE" in line_upper:
             self.estop_active = True
-        elif "ESTOP NOT ACTIVE" in line:
+        elif "ESTOP NOT ACTIVE" in line_upper or "ESTOP:INACTIVE" in line_upper or "ESTOP NOT ACTIVE" in line_upper:
             self.estop_active = False
-        elif "ESTOP" in line:
-            self.estop_active = True
+        elif line_upper.startswith("ESTOP") and "RESET" not in line_upper:
+            # Generic estop trigger (but not the reset message)
+            if "HMI" in line_upper or "TRIGGER" in line_upper:
+                self.estop_active = True
+
+        # Plasma status
+        if "PLASMA:ON" in line_upper or line_upper == "PLASMA ON":
+            self.plasma_on = True
+        elif "PLASMA:OFF" in line_upper or line_upper == "PLASMA OFF":
+            self.plasma_on = False
+
+        # Dropout states - look for IDLE_UP, IDLE_DOWN, IDLE_LOAD patterns
+        if "IDLE_" in line_upper or line_upper in ["NONE", "IDLE_UP", "IDLE_DOWN", "IDLE_LOAD"]:
+            # This is a dropout state, but we need context to know which one
+            # The Arduino sends them in order, so we'll just update them sequentially
+            for i in range(4):
+                if line_upper in ["IDLE_UP", "IDLE_DOWN", "IDLE_LOAD", "NONE"]:
+                    # Store in a temporary list and update when we have all 4
+                    if not hasattr(self, '_temp_dropouts'):
+                        self._temp_dropouts = []
+                    self._temp_dropouts.append(line_upper)
+                    if len(self._temp_dropouts) >= 4:
+                        self.dropout_states = self._temp_dropouts[:4]
+                        self._temp_dropouts = []
+                    break
 
 
 class HMIMainWindow(QMainWindow):
@@ -422,7 +446,7 @@ class HMIMainWindow(QMainWindow):
         dropout_layout = QHBoxLayout()
         dropout_layout.setSpacing(10)
 
-        self.btn_all_up = QPushButton("Arms Up\nClamps Closed")
+        self.btn_all_up = QPushButton("All Up")
         self.btn_all_up.setFont(QFont("Arial", 16, QFont.Bold))
         self.btn_all_up.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_all_up.setStyleSheet("""
@@ -443,7 +467,7 @@ class HMIMainWindow(QMainWindow):
         """)
         self.btn_all_up.clicked.connect(lambda: self.arduino.send_command("all_up"))
 
-        self.btn_all_load = QPushButton("Arms Up\nClamps Open")
+        self.btn_all_load = QPushButton("All Load")
         self.btn_all_load.setFont(QFont("Arial", 16, QFont.Bold))
         self.btn_all_load.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_all_load.setStyleSheet("""
@@ -464,7 +488,7 @@ class HMIMainWindow(QMainWindow):
         """)
         self.btn_all_load.clicked.connect(lambda: self.arduino.send_command("all_load"))
 
-        self.btn_all_down = QPushButton("Arms Down\nCLamps Open")
+        self.btn_all_down = QPushButton("All Down")
         self.btn_all_down.setFont(QFont("Arial", 16, QFont.Bold))
         self.btn_all_down.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_all_down.setStyleSheet("""
