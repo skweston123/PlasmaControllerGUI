@@ -270,6 +270,19 @@ class HMIMainWindow(QMainWindow):
         # Update button states based on mode
         self.update_button_states()
 
+        from PyQt5.QtWidgets import QShortcut
+        from PyQt5.QtGui import QKeySequence
+
+        # ESC key to exit fullscreen
+        self.shortcut_esc = QShortcut(QKeySequence(Qt.Key_Escape), self)
+        self.shortcut_esc.activated.connect(self.showNormal)
+
+        # Ctrl+Q to quit application
+        self.shortcut_quit = QShortcut(QKeySequence("Ctrl+Q"), self)
+        self.shortcut_quit.activated.connect(QApplication.quit)
+
+        # Alt+F4 also works by default on most systems
+
     def create_status_display(self):
         """Create status display widget"""
         status_frame = QFrame()
