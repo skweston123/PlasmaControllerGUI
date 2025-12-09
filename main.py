@@ -310,9 +310,22 @@ class HMIMainWindow(QMainWindow):
 
     def create_auto_controls(self):
         """Create auto process controls"""
-        auto_group = QGroupBox("Auto Process Controls")
-        auto_group.setFont(QFont("Arial", 13, QFont.Bold))
-        auto_group.setAlignment(Qt.AlignCenter)
+        auto_group = QGroupBox()
+        auto_group.setStyleSheet("""
+            QGroupBox {
+                font: bold 13pt Arial;
+                border: 2px solid gray;
+                border-radius: 5px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top center;
+                padding: 0 5px;
+            }
+        """)
+        auto_group.setTitle("Auto Process Controls")
         auto_layout = QVBoxLayout()
         auto_layout.setSpacing(10)
         auto_layout.setContentsMargins(10, 15, 10, 10)
@@ -437,9 +450,22 @@ class HMIMainWindow(QMainWindow):
 
     def create_manual_controls(self):
         """Create manual controls"""
-        manual_group = QGroupBox("Manual Controls")
-        manual_group.setFont(QFont("Arial", 13, QFont.Bold))
-        manual_group.setAlignment(Qt.AlignCenter)
+        manual_group = QGroupBox()
+        manual_group.setStyleSheet("""
+            QGroupBox {
+                font: bold 13pt Arial;
+                border: 2px solid gray;
+                border-radius: 5px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top center;
+                padding: 0 5px;
+            }
+        """)
+        manual_group.setTitle("Manual Controls")
         manual_layout = QVBoxLayout()
         manual_layout.setSpacing(10)
         manual_layout.setContentsMargins(10, 15, 10, 10)
