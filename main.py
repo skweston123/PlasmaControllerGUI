@@ -1,678 +1,616 @@
 #!/usr/bin/env python3
 """
-Arduino Dropout System Control GUI - Optimized for 7" Touch Display
-Designed for 800x480 horizontal touchscreen
+Plasma Treatment System HMI
+PyQt5 interface for Arduino-based industrial control system
 """
 
 import sys
 import serial
 import serial.tools.list_ports
-import json
-import time
-import queue
-import threading
-from dataclasses import dataclass
-from typing import Optional
-
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
-                             QHBoxLayout, QGridLayout, QPushButton, QLabel,
-                             QComboBox, QFrame, QScrollArea, QSizePolicy, QMessageBox)
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
-from PyQt5.QtGui import QFont, QPalette, QColor, QKeySequence
+                             QHBoxLayout, QPushButton, QLabel, QButtonGroup,
+                             QRadioButton, QGroupBox, QGridLayout, QFrame)
+from PyQt5.QtCore import QTimer, Qt, pyqtSignal, QThread
+from PyQt5.QtGui import QFont, QPalette, QColor
 
 
-@dataclass
-class DropoutStatus:
-    """Status information for a single dropout fixture"""
-    state: str = "UNKNOWN"
-    arm_state: str = "UNKNOWN"
-    clamp_state: str = "UNKNOWN"
+class SerialReader(QThread):
+    """Background thread for reading serial data"""
+    data_received = pyqtSignal(str)
 
-
-@dataclass
-class SystemStatus:
-    """Overall system status"""
-    estop_active: bool = False
-    auto_mode: bool = True
-    plasma_on: bool = False
-    plasma_ok: bool = False
-    fanuc_check: bool = False
-    dropouts: list = None
-
-    def __post_init__(self):
-        if self.dropouts is None:
-            self.dropouts = [DropoutStatus() for _ in range(4)]
-
-
-class SerialInterface(QObject):
-    """Handles serial communication with Arduino"""
-    status_received = pyqtSignal(dict)
-
-    def __init__(self, port: str = None, baudrate: int = 9600):
+    def __init__(self, serial_port):
         super().__init__()
-        self.port = port
-        self.baudrate = baudrate
-        self.serial_conn: Optional[serial.Serial] = None
-        self.connected = False
-        self.read_thread: Optional[threading.Thread] = None
-        self.running = False
+        self.serial_port = serial_port
+        self.running = True
 
-    def connect(self) -> bool:
-        """Connect to the Arduino"""
-        try:
-            self.serial_conn = serial.Serial(self.port, self.baudrate, timeout=1)
-            time.sleep(2)
-            self.connected = True
-            self.running = True
-            self.read_thread = threading.Thread(target=self._read_loop, daemon=True)
-            self.read_thread.start()
-            return True
-        except Exception as e:
-            print(f"Connection error: {e}")
-            return False
-
-    def disconnect(self):
-        """Disconnect from Arduino"""
-        self.running = False
-        if self.read_thread:
-            self.read_thread.join(timeout=2)
-        if self.serial_conn and self.serial_conn.is_open:
-            self.serial_conn.close()
-        self.connected = False
-
-    def send_command(self, command: str):
-        """Send a command to the Arduino"""
-        if self.connected and self.serial_conn:
+    def run(self):
+        buffer = ""
+        while self.running:
             try:
-                self.serial_conn.write(f"{command}\n".encode())
-                self.serial_conn.flush()
+                if self.serial_port.in_waiting:
+                    data = self.serial_port.read(self.serial_port.in_waiting).decode('utf-8', errors='ignore')
+                    buffer += data
+
+                    # Process complete lines
+                    while '\n' in buffer:
+                        line, buffer = buffer.split('\n', 1)
+                        line = line.strip()
+                        if line:
+                            self.data_received.emit(line)
+            except Exception as e:
+                print(f"Serial read error: {e}")
+
+    def stop(self):
+        self.running = False
+
+
+class ArduinoInterface:
+    """Handles communication with Arduino"""
+
+    def __init__(self):
+        self.serial_port = None
+        self.connect()
+
+    def connect(self):
+        """Auto-connect to Arduino on USB port"""
+        ports = serial.tools.list_ports.comports()
+
+        for port in ports:
+            try:
+                # Try to connect to each port
+                self.serial_port = serial.Serial(port.device, 9600, timeout=1)
+                print(f"Connected to Arduino on {port.device}")
+                return True
+            except Exception as e:
+                print(f"Failed to connect to {port.device}: {e}")
+
+        print("No Arduino found")
+        return False
+
+    def send_command(self, command):
+        """Send command to Arduino"""
+        if self.serial_port and self.serial_port.is_open:
+            try:
+                self.serial_port.write(f"{command}\n".encode())
+                return True
             except Exception as e:
                 print(f"Send error: {e}")
+                return False
+        return False
 
-    def _read_loop(self):
-        """Background thread to read status updates from Arduino"""
-        while self.running and self.serial_conn:
-            try:
-                if self.serial_conn.in_waiting:
-                    line = self.serial_conn.readline().decode().strip()
-                    if line.startswith("STATUS:"):
-                        try:
-                            status_json = line[7:]
-                            status_data = json.loads(status_json)
-                            self.status_received.emit(status_data)
-                        except json.JSONDecodeError:
-                            pass
-                time.sleep(0.05)
-            except Exception as e:
-                print(f"Read error: {e}")
-                break
-
-    @staticmethod
-    def list_ports():
-        """List available serial ports"""
-        return [port.device for port in serial.tools.list_ports.comports()]
+    def close(self):
+        """Close serial connection"""
+        if self.serial_port and self.serial_port.is_open:
+            self.serial_port.close()
 
 
-class TouchButton(QPushButton):
-    """Large touch-friendly button"""
+class SystemStatus:
+    """Tracks system state"""
 
-    def __init__(self, text, parent=None, height=65):
-        super().__init__(text, parent)
-        self.setMinimumHeight(height)
-        font = QFont()
-        font.setPointSize(13)
-        font.setBold(True)
-        self.setFont(font)
+    def __init__(self):
+        self.process_state = "OFF"
+        self.estop_active = False
+        self.plasma_on = False
 
+        # Dropout states
+        self.dropout_states = ["NONE", "NONE", "NONE", "NONE"]
+        self.arm_states = ["UNKNOWN", "UNKNOWN", "UNKNOWN", "UNKNOWN"]
+        self.clamp_states = ["UNKNOWN", "UNKNOWN", "UNKNOWN", "UNKNOWN"]
 
-class StatusLabel(QLabel):
-    """Status label with styling"""
+    def update_from_serial(self, line):
+        """Parse serial data and update status"""
+        line = line.upper().strip()
 
-    def __init__(self, text="", bold=False, size=12):
-        super().__init__(text)
-        font = QFont()
-        font.setPointSize(size)
-        if bold:
-            font.setBold(True)
-        self.setFont(font)
-        self.setAlignment(Qt.AlignCenter)
+        # Process state updates
+        if line in ["OFF", "LOADING", "READY", "TREATING", "UNLOADING", "DROPPING", "RETURNING"]:
+            self.process_state = line
 
-
-class DropoutWidget(QFrame):
-    """Compact widget for a single dropout fixture"""
-
-    def __init__(self, dropout_num: int, serial_interface: SerialInterface):
-        super().__init__()
-        self.dropout_num = dropout_num
-        self.serial = serial_interface
-
-        self.setFrameStyle(QFrame.Box | QFrame.Raised)
-        self.setLineWidth(2)
-
-        layout = QVBoxLayout()
-        layout.setSpacing(8)
-        layout.setContentsMargins(10, 12, 10, 12)
-
-        # Header
-        header = StatusLabel(f"Dropout {dropout_num}", bold=True, size=16)
-        header.setMinimumHeight(30)
-        layout.addWidget(header)
-
-        # State display - larger font
-        self.state_label = StatusLabel("UNKNOWN", bold=True, size=15)
-        self.state_label.setMinimumHeight(35)
-        layout.addWidget(self.state_label)
-
-        # Arm/Clamp status - larger fonts
-        status_layout = QHBoxLayout()
-        status_layout.setSpacing(8)
-
-        arm_container = QVBoxLayout()
-        arm_container.setSpacing(4)
-        arm_label = QLabel("ARM")
-        arm_label.setAlignment(Qt.AlignCenter)
-        font = QFont()
-        font.setPointSize(12)
-        font.setBold(True)
-        arm_label.setFont(font)
-        self.arm_value = StatusLabel("?", size=14)
-        self.arm_value.setMinimumHeight(40)
-        arm_container.addWidget(arm_label)
-        arm_container.addWidget(self.arm_value)
-
-        clamp_container = QVBoxLayout()
-        clamp_container.setSpacing(4)
-        clamp_label = QLabel("CLAMP")
-        clamp_label.setAlignment(Qt.AlignCenter)
-        clamp_label.setFont(font)
-        self.clamp_value = StatusLabel("?", size=14)
-        self.clamp_value.setMinimumHeight(40)
-        clamp_container.addWidget(clamp_label)
-        clamp_container.addWidget(self.clamp_value)
-
-        status_layout.addLayout(arm_container)
-        status_layout.addLayout(clamp_container)
-        layout.addLayout(status_layout)
-
-        # Add some spacing before buttons
-        layout.addSpacing(10)
-
-        # Control buttons - much taller
-        btn_up = TouchButton("UP", height=65)
-        btn_up.clicked.connect(self.cmd_up)
-        layout.addWidget(btn_up)
-
-        btn_load = TouchButton("LOAD", height=65)
-        btn_load.clicked.connect(self.cmd_load)
-        layout.addWidget(btn_load)
-
-        btn_down = TouchButton("DOWN", height=65)
-        btn_down.clicked.connect(self.cmd_down)
-        layout.addWidget(btn_down)
-
-        layout.addStretch()
-        self.setLayout(layout)
-
-    def cmd_up(self):
-        self.serial.send_command(f"{self.dropout_num}_up")
-
-    def cmd_load(self):
-        self.serial.send_command(f"{self.dropout_num}_load")
-
-    def cmd_down(self):
-        self.serial.send_command(f"{self.dropout_num}_down")
-
-    def update_status(self, status: DropoutStatus):
-        """Update display with new status"""
-        self.state_label.setText(status.state)
-
-        # Show full text, not abbreviated
-        self.arm_value.setText(status.arm_state)
-        self.clamp_value.setText(status.clamp_state)
-
-        # Color code the state
-        if "IDLE" in status.state:
-            color = "green"
-        elif "ERROR" in status.state or status.state == "NONE":
-            color = "red"
-        else:
-            color = "orange"
-
-        self.state_label.setStyleSheet(f"color: {color};")
+        # E-stop status
+        elif "ESTOP ACTIVE" in line:
+            self.estop_active = True
+        elif "ESTOP NOT ACTIVE" in line:
+            self.estop_active = False
+        elif "ESTOP" in line:
+            self.estop_active = True
 
 
-class TouchControlGUI(QMainWindow):
-    """Main GUI optimized for 7-inch touchscreen"""
+class HMIMainWindow(QMainWindow):
+    """Main HMI Window"""
 
     def __init__(self):
         super().__init__()
-        self.serial = SerialInterface()
-        self.system_status = SystemStatus()
 
-        self.setWindowTitle("Dropout Control")
-        self.setGeometry(0, 0, 800, 480)
+        # Initialize Arduino interface
+        self.arduino = ArduinoInterface()
+        self.status = SystemStatus()
 
-        # Track fullscreen state
-        self.is_fullscreen = False
+        # Start serial reader thread
+        if self.arduino.serial_port:
+            self.serial_reader = SerialReader(self.arduino.serial_port)
+            self.serial_reader.data_received.connect(self.handle_serial_data)
+            self.serial_reader.start()
 
-        # Set dark theme for better visibility
-        self.set_dark_theme()
+        # Current mode
+        self.current_mode = "AUTO"  # AUTO, MANUAL
+        self.selected_dropout = "ALL"  # ALL, 1, 2, 3, 4
 
-        self.setup_ui()
+        self.init_ui()
 
-        # Connect serial signal
-        self.serial.status_received.connect(self.process_status)
-
-        # Auto-request status
+        # Status update timer
         self.status_timer = QTimer()
-        self.status_timer.timeout.connect(self.request_status)
-        self.status_timer.start(2000)  # Request every 2 seconds as backup
+        self.status_timer.timeout.connect(self.request_status_update)
+        self.status_timer.start(1000)  # Update every second
 
-    def set_dark_theme(self):
-        """Apply dark theme for better contrast"""
-        palette = QPalette()
-        palette.setColor(QPalette.Window, QColor(53, 53, 53))
-        palette.setColor(QPalette.WindowText, Qt.white)
-        palette.setColor(QPalette.Base, QColor(35, 35, 35))
-        palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
-        palette.setColor(QPalette.ToolTipBase, Qt.white)
-        palette.setColor(QPalette.ToolTipText, Qt.white)
-        palette.setColor(QPalette.Text, Qt.white)
-        palette.setColor(QPalette.Button, QColor(53, 53, 53))
-        palette.setColor(QPalette.ButtonText, Qt.white)
-        palette.setColor(QPalette.BrightText, Qt.red)
-        palette.setColor(QPalette.Highlight, QColor(142, 45, 197))
-        palette.setColor(QPalette.HighlightedText, Qt.black)
+    def init_ui(self):
+        """Initialize UI"""
+        self.setWindowTitle("Plasma Treatment System")
+        self.setGeometry(0, 0, 1280, 800)
+
+        # Main widget and layout
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        main_layout = QVBoxLayout()
+        main_widget.setLayout(main_layout)
+
+        # Set background color
+        palette = self.palette()
+        palette.setColor(QPalette.Window, QColor(240, 240, 240))
         self.setPalette(palette)
 
-        # Button styling
-        self.setStyleSheet("""
+        # Title bar
+        title_layout = QHBoxLayout()
+        title_label = QLabel("Plasma Treatment System")
+        title_label.setFont(QFont("Arial", 24, QFont.Bold))
+        title_label.setAlignment(Qt.AlignCenter)
+        title_layout.addWidget(title_label)
+
+        # E-Stop button (always visible)
+        self.estop_btn = QPushButton("🛑 EMERGENCY STOP")
+        self.estop_btn.setFont(QFont("Arial", 16, QFont.Bold))
+        self.estop_btn.setStyleSheet("""
             QPushButton {
-                background-color: #454545;
-                border: 2px solid #666;
-                border-radius: 5px;
-                padding: 5px;
+                background-color: #cc0000;
                 color: white;
+                border: 3px solid #990000;
+                border-radius: 10px;
+                padding: 20px;
+                min-width: 200px;
             }
             QPushButton:pressed {
-                background-color: #666;
-            }
-            QPushButton:disabled {
-                background-color: #2a2a2a;
-                color: #666;
-            }
-            QFrame {
-                background-color: #3a3a3a;
-                border-radius: 5px;
-            }
-            QComboBox {
-                background-color: #454545;
-                border: 2px solid #666;
-                padding: 5px;
-                min-height: 40px;
-                font-size: 11pt;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 30px;
-            }
-            QComboBox::down-arrow {
-                image: none;
-                border-left: 6px solid transparent;
-                border-right: 6px solid transparent;
-                border-top: 6px solid white;
-                margin-right: 10px;
+                background-color: #990000;
             }
         """)
+        self.estop_btn.clicked.connect(self.trigger_estop)
+        title_layout.addWidget(self.estop_btn)
 
-    def setup_ui(self):
-        """Create the user interface"""
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
+        main_layout.addLayout(title_layout)
 
-        main_layout = QVBoxLayout()
-        main_layout.setSpacing(8)
-        main_layout.setContentsMargins(8, 8, 8, 8)
+        # Status display (always visible)
+        self.status_widget = self.create_status_display()
+        main_layout.addWidget(self.status_widget)
 
-        # === Top Bar: Connection and Status ===
-        top_bar = QHBoxLayout()
-        top_bar.setSpacing(8)
+        # Control panel (changes based on mode)
+        self.control_widget = QWidget()
+        self.control_layout = QVBoxLayout()
+        self.control_widget.setLayout(self.control_layout)
+        main_layout.addWidget(self.control_widget)
 
-        # Connection controls (left side)
-        conn_widget = QFrame()
-        conn_layout = QHBoxLayout()
-        conn_layout.setContentsMargins(8, 8, 8, 8)
+        # Initialize in auto mode
+        self.update_control_panel()
 
-        self.port_combo = QComboBox()
-        self.port_combo.addItems(SerialInterface.list_ports())
-        self.port_combo.setMinimumWidth(150)
-        self.port_combo.setMinimumHeight(60)
-        conn_layout.addWidget(self.port_combo)
+    def create_status_display(self):
+        """Create status display widget"""
+        status_frame = QFrame()
+        status_frame.setFrameStyle(QFrame.Box | QFrame.Raised)
+        status_frame.setLineWidth(2)
+        status_layout = QGridLayout()
+        status_frame.setLayout(status_layout)
 
-        refresh_btn = TouchButton("↻", height=60)
-        refresh_btn.setMaximumWidth(70)
-        refresh_btn.clicked.connect(self.refresh_ports)
-        conn_layout.addWidget(refresh_btn)
+        # Process state
+        status_layout.addWidget(QLabel("Process State:"), 0, 0)
+        self.process_state_label = QLabel("OFF")
+        self.process_state_label.setFont(QFont("Arial", 16, QFont.Bold))
+        self.process_state_label.setStyleSheet("color: gray;")
+        status_layout.addWidget(self.process_state_label, 0, 1)
 
-        self.connect_btn = TouchButton("Connect", height=60)
-        self.connect_btn.setMinimumWidth(130)
-        self.connect_btn.clicked.connect(self.toggle_connection)
-        conn_layout.addWidget(self.connect_btn)
+        # E-Stop status
+        status_layout.addWidget(QLabel("E-Stop:"), 0, 2)
+        self.estop_status_label = QLabel("INACTIVE")
+        self.estop_status_label.setFont(QFont("Arial", 16, QFont.Bold))
+        self.estop_status_label.setStyleSheet("color: green;")
+        status_layout.addWidget(self.estop_status_label, 0, 3)
 
-        conn_widget.setLayout(conn_layout)
-        top_bar.addWidget(conn_widget)
+        # Plasma status
+        status_layout.addWidget(QLabel("Plasma:"), 0, 4)
+        self.plasma_status_label = QLabel("OFF")
+        self.plasma_status_label.setFont(QFont("Arial", 16, QFont.Bold))
+        self.plasma_status_label.setStyleSheet("color: gray;")
+        status_layout.addWidget(self.plasma_status_label, 0, 5)
 
-        # System status display (center)
-        status_widget = QFrame()
-        status_layout = QVBoxLayout()
-        status_layout.setContentsMargins(12, 8, 12, 8)
-        status_layout.setSpacing(5)
-
-        self.estop_label = StatusLabel("● E-STOP", bold=True, size=16)
-        self.estop_label.setStyleSheet("color: red;")
-        self.estop_label.setMinimumHeight(35)
-        status_layout.addWidget(self.estop_label)
-
-        bottom_status = QHBoxLayout()
-        bottom_status.setSpacing(20)
-
-        self.mode_label = StatusLabel("AUTO", bold=True, size=14)
-        self.mode_label.setMinimumHeight(25)
-        bottom_status.addWidget(self.mode_label)
-
-        plasma_container = QHBoxLayout()
-        plasma_container.setSpacing(5)
-        plasma_label = QLabel("Plasma:")
-        plasma_font = QFont("Arial", 13)
-        plasma_font.setBold(True)
-        plasma_label.setFont(plasma_font)
-        self.plasma_indicator = StatusLabel("●", size=16)
-        plasma_container.addWidget(plasma_label)
-        plasma_container.addWidget(self.plasma_indicator)
-        bottom_status.addLayout(plasma_container)
-
-        status_layout.addLayout(bottom_status)
-        status_widget.setLayout(status_layout)
-        status_widget.setMaximumWidth(240)
-        top_bar.addWidget(status_widget)
-
-        # Mode and E-Stop buttons (right side)
-        control_widget = QFrame()
-        control_layout = QHBoxLayout()
-        control_layout.setContentsMargins(8, 8, 8, 8)
-        control_layout.setSpacing(8)
-
-        mode_btn = TouchButton("AUTO/\nMANUAL", height=60)
-        mode_btn.setMinimumWidth(100)
-        mode_btn.clicked.connect(self.toggle_mode)
-        control_layout.addWidget(mode_btn)
-
-        estop_btn = TouchButton("E-STOP", height=60)
-        estop_btn.setMinimumWidth(110)
-        estop_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #8B0000;
-                font-size: 18pt;
-                font-weight: bold;
-            }
-            QPushButton:pressed {
-                background-color: #FF0000;
-            }
-        """)
-        estop_btn.clicked.connect(self.trigger_estop)
-        control_layout.addWidget(estop_btn)
-
-        reset_btn = TouchButton("RESET", height=60)
-        reset_btn.setMinimumWidth(100)
-        reset_btn.setStyleSheet("background-color: #006400; font-size: 16pt;")
-        reset_btn.clicked.connect(self.reset_estop)
-        control_layout.addWidget(reset_btn)
-
-        # Exit button (small, in corner)
-        exit_btn = QPushButton("✕")
-        exit_btn.setMaximumWidth(60)
-        exit_btn.setMinimumHeight(60)
-        exit_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2a2a2a;
-                color: #888;
-                font-size: 20pt;
-                border: 1px solid #555;
-            }
-            QPushButton:pressed {
-                background-color: #444;
-            }
-        """)
-        exit_btn.clicked.connect(self.confirm_exit)
-        control_layout.addWidget(exit_btn)
-
-        control_widget.setLayout(control_layout)
-        top_bar.addWidget(control_widget)
-
-        main_layout.addLayout(top_bar)
-
-        # === Middle Section: Dropouts and Plasma Control ===
-        middle_layout = QHBoxLayout()
-        middle_layout.setSpacing(8)
-
-        # Dropout fixtures
-        self.dropout_widgets = []
+        # Dropout states
+        self.dropout_labels = []
         for i in range(4):
-            dropout = DropoutWidget(i + 1, self.serial)
-            middle_layout.addWidget(dropout, stretch=1)
-            self.dropout_widgets.append(dropout)
+            status_layout.addWidget(QLabel(f"Dropout {i + 1}:"), 1, i)
+            label = QLabel("NONE")
+            label.setFont(QFont("Arial", 12))
+            status_layout.addWidget(label, 2, i)
+            self.dropout_labels.append(label)
 
-        # Plasma control panel
-        plasma_panel = QFrame()
-        plasma_layout = QVBoxLayout()
-        plasma_layout.setContentsMargins(10, 10, 10, 10)
-        plasma_layout.setSpacing(10)
+        return status_frame
 
-        plasma_header = StatusLabel("PLASMA", bold=True, size=16)
-        plasma_layout.addWidget(plasma_header)
+    def update_control_panel(self):
+        """Update control panel based on mode and state"""
+        # Clear existing controls
+        for i in reversed(range(self.control_layout.count())):
+            widget = self.control_layout.itemAt(i).widget()
+            if widget:
+                widget.setParent(None)
 
-        plasma_on_btn = TouchButton("ON", height=120)
-        plasma_on_btn.setStyleSheet("""
+        if self.current_mode == "AUTO":
+            self.create_auto_mode_controls()
+        else:
+            self.create_manual_mode_controls()
+
+    def create_auto_mode_controls(self):
+        """Create controls for auto mode"""
+        # Mode selection
+        mode_group = QGroupBox("Mode Selection")
+        mode_layout = QHBoxLayout()
+
+        self.auto_radio = QRadioButton("Auto Process")
+        self.auto_radio.setChecked(True)
+        self.auto_radio.setFont(QFont("Arial", 14))
+        self.auto_radio.toggled.connect(self.mode_changed)
+
+        self.manual_radio = QRadioButton("Manual Control")
+        self.manual_radio.setFont(QFont("Arial", 14))
+        self.manual_radio.toggled.connect(self.mode_changed)
+
+        mode_layout.addWidget(self.auto_radio)
+        mode_layout.addWidget(self.manual_radio)
+        mode_group.setLayout(mode_layout)
+        self.control_layout.addWidget(mode_group)
+
+        # Process controls (based on current state)
+        process_group = QGroupBox("Process Controls")
+        process_layout = QVBoxLayout()
+
+        if self.status.process_state == "OFF":
+            btn = QPushButton("▶ Begin Auto Treatment")
+            btn.setFont(QFont("Arial", 16, QFont.Bold))
+            btn.setMinimumHeight(80)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #0066cc;
+                    color: white;
+                    border-radius: 10px;
+                    padding: 10px;
+                }
+                QPushButton:pressed {
+                    background-color: #004499;
+                }
+            """)
+            btn.clicked.connect(self.begin_auto_treatment)
+            process_layout.addWidget(btn)
+
+        elif self.status.process_state == "LOADING":
+            btn_loaded = QPushButton("✓ Part Loaded")
+            btn_loaded.setFont(QFont("Arial", 16, QFont.Bold))
+            btn_loaded.setMinimumHeight(80)
+            btn_loaded.setStyleSheet("""
+                QPushButton {
+                    background-color: #00aa00;
+                    color: white;
+                    border-radius: 10px;
+                }
+                QPushButton:pressed {
+                    background-color: #008800;
+                }
+            """)
+            btn_loaded.clicked.connect(lambda: self.arduino.send_command("part_loaded"))
+            process_layout.addWidget(btn_loaded)
+
+            btn_exit = QPushButton("⏹ Exit Process")
+            btn_exit.setFont(QFont("Arial", 16))
+            btn_exit.setMinimumHeight(80)
+            btn_exit.setStyleSheet("""
+                QPushButton {
+                    background-color: #666666;
+                    color: white;
+                    border-radius: 10px;
+                }
+                QPushButton:pressed {
+                    background-color: #444444;
+                }
+            """)
+            btn_exit.clicked.connect(self.exit_process)
+            process_layout.addWidget(btn_exit)
+
+        elif self.status.process_state == "READY":
+            btn = QPushButton("▶ Start Treatment")
+            btn.setFont(QFont("Arial", 16, QFont.Bold))
+            btn.setMinimumHeight(80)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #0066cc;
+                    color: white;
+                    border-radius: 10px;
+                }
+                QPushButton:pressed {
+                    background-color: #004499;
+                }
+            """)
+            btn.clicked.connect(lambda: self.arduino.send_command("start_treatment"))
+            process_layout.addWidget(btn)
+
+        elif self.status.process_state == "UNLOADING":
+            btn_unloaded = QPushButton("✓ Part Unloaded")
+            btn_unloaded.setFont(QFont("Arial", 16, QFont.Bold))
+            btn_unloaded.setMinimumHeight(80)
+            btn_unloaded.setStyleSheet("""
+                QPushButton {
+                    background-color: #00aa00;
+                    color: white;
+                    border-radius: 10px;
+                }
+                QPushButton:pressed {
+                    background-color: #008800;
+                }
+            """)
+            btn_unloaded.clicked.connect(lambda: self.arduino.send_command("part_unloaded"))
+            process_layout.addWidget(btn_unloaded)
+
+        else:
+            # TREATING, DROPPING, RETURNING - no controls available
+            label = QLabel(f"Process Running: {self.status.process_state}")
+            label.setFont(QFont("Arial", 16))
+            label.setAlignment(Qt.AlignCenter)
+            label.setStyleSheet("color: #0066cc; padding: 40px;")
+            process_layout.addWidget(label)
+
+        process_group.setLayout(process_layout)
+        self.control_layout.addWidget(process_group)
+
+        # Reset button
+        reset_btn = QPushButton("🔄 Reset System")
+        reset_btn.setFont(QFont("Arial", 14))
+        reset_btn.setMinimumHeight(60)
+        reset_btn.setStyleSheet("""
             QPushButton {
-                background-color: #2d5016;
-                font-size: 20pt;
-                font-weight: bold;
+                background-color: #ff6600;
+                color: white;
+                border-radius: 10px;
             }
             QPushButton:pressed {
-                background-color: #3d7020;
+                background-color: #cc5200;
             }
         """)
-        plasma_on_btn.clicked.connect(self.plasma_on)
-        plasma_layout.addWidget(plasma_on_btn)
+        reset_btn.clicked.connect(self.reset_system)
+        self.control_layout.addWidget(reset_btn)
 
-        plasma_off_btn = TouchButton("OFF", height=120)
-        plasma_off_btn.setStyleSheet("""
+    def create_manual_mode_controls(self):
+        """Create controls for manual mode"""
+        # Mode selection
+        mode_group = QGroupBox("Mode Selection")
+        mode_layout = QHBoxLayout()
+
+        self.auto_radio = QRadioButton("Auto Process")
+        self.auto_radio.setFont(QFont("Arial", 14))
+        self.auto_radio.toggled.connect(self.mode_changed)
+
+        self.manual_radio = QRadioButton("Manual Control")
+        self.manual_radio.setChecked(True)
+        self.manual_radio.setFont(QFont("Arial", 14))
+        self.manual_radio.toggled.connect(self.mode_changed)
+
+        mode_layout.addWidget(self.auto_radio)
+        mode_layout.addWidget(self.manual_radio)
+        mode_group.setLayout(mode_layout)
+        self.control_layout.addWidget(mode_group)
+
+        # Dropout selection
+        dropout_group = QGroupBox("Dropout Selection")
+        dropout_layout = QHBoxLayout()
+
+        self.dropout_button_group = QButtonGroup()
+
+        for option in ["ALL", "1", "2", "3", "4"]:
+            radio = QRadioButton(f"Dropout {option}" if option != "ALL" else "All Dropouts")
+            radio.setFont(QFont("Arial", 12))
+            radio.toggled.connect(lambda checked, opt=option: self.dropout_selection_changed(opt, checked))
+            self.dropout_button_group.addButton(radio)
+            dropout_layout.addWidget(radio)
+            if option == "ALL":
+                radio.setChecked(True)
+
+        dropout_group.setLayout(dropout_layout)
+        self.control_layout.addWidget(dropout_group)
+
+        # Manual controls
+        manual_group = QGroupBox("Manual Controls")
+        manual_layout = QHBoxLayout()
+
+        btn_up = QPushButton("⬆ Up")
+        btn_up.setFont(QFont("Arial", 14, QFont.Bold))
+        btn_up.setMinimumHeight(80)
+        btn_up.setStyleSheet("background-color: #4CAF50; color: white; border-radius: 10px;")
+        btn_up.clicked.connect(self.command_up)
+
+        btn_load = QPushButton("🔄 Load")
+        btn_load.setFont(QFont("Arial", 14, QFont.Bold))
+        btn_load.setMinimumHeight(80)
+        btn_load.setStyleSheet("background-color: #2196F3; color: white; border-radius: 10px;")
+        btn_load.clicked.connect(self.command_load)
+
+        btn_down = QPushButton("⬇ Down")
+        btn_down.setFont(QFont("Arial", 14, QFont.Bold))
+        btn_down.setMinimumHeight(80)
+        btn_down.setStyleSheet("background-color: #FF9800; color: white; border-radius: 10px;")
+        btn_down.clicked.connect(self.command_down)
+
+        manual_layout.addWidget(btn_up)
+        manual_layout.addWidget(btn_load)
+        manual_layout.addWidget(btn_down)
+        manual_group.setLayout(manual_layout)
+        self.control_layout.addWidget(manual_group)
+
+        # Plasma controls
+        plasma_group = QGroupBox("Plasma Controls")
+        plasma_layout = QHBoxLayout()
+
+        btn_plasma_on = QPushButton("⚡ Plasma ON")
+        btn_plasma_on.setFont(QFont("Arial", 14, QFont.Bold))
+        btn_plasma_on.setMinimumHeight(60)
+        btn_plasma_on.setStyleSheet("background-color: #9C27B0; color: white; border-radius: 10px;")
+        btn_plasma_on.clicked.connect(lambda: self.arduino.send_command("plasma_on"))
+
+        btn_plasma_off = QPushButton("Plasma OFF")
+        btn_plasma_off.setFont(QFont("Arial", 14))
+        btn_plasma_off.setMinimumHeight(60)
+        btn_plasma_off.setStyleSheet("background-color: #666; color: white; border-radius: 10px;")
+        btn_plasma_off.clicked.connect(lambda: self.arduino.send_command("plasma_off"))
+
+        plasma_layout.addWidget(btn_plasma_on)
+        plasma_layout.addWidget(btn_plasma_off)
+        plasma_group.setLayout(plasma_layout)
+        self.control_layout.addWidget(plasma_group)
+
+        # Reset button
+        reset_btn = QPushButton("🔄 Reset System")
+        reset_btn.setFont(QFont("Arial", 14))
+        reset_btn.setMinimumHeight(60)
+        reset_btn.setStyleSheet("""
             QPushButton {
-                background-color: #501616;
-                font-size: 20pt;
-                font-weight: bold;
+                background-color: #ff6600;
+                color: white;
+                border-radius: 10px;
             }
             QPushButton:pressed {
-                background-color: #702020;
+                background-color: #cc5200;
             }
         """)
-        plasma_off_btn.clicked.connect(self.plasma_off)
-        plasma_layout.addWidget(plasma_off_btn)
+        reset_btn.clicked.connect(self.reset_system)
+        self.control_layout.addWidget(reset_btn)
 
-        plasma_layout.addStretch()
-        plasma_panel.setLayout(plasma_layout)
-        plasma_panel.setMinimumWidth(150)
-        plasma_panel.setMaximumWidth(170)
-        middle_layout.addWidget(plasma_panel)
-
-        main_layout.addLayout(middle_layout, stretch=10)
-
-        central_widget.setLayout(main_layout)
-
-    def refresh_ports(self):
-        """Refresh serial port list"""
-        current = self.port_combo.currentText()
-        self.port_combo.clear()
-        ports = SerialInterface.list_ports()
-        self.port_combo.addItems(ports)
-
-        if current in ports:
-            self.port_combo.setCurrentText(current)
-
-    def toggle_connection(self):
-        """Connect or disconnect"""
-        if not self.serial.connected:
-            port = self.port_combo.currentText()
-            if not port:
-                return
-
-            self.serial.port = port
-            if self.serial.connect():
-                self.connect_btn.setText("Disconnect")
-                self.connect_btn.setStyleSheet("background-color: #006400;")
-                self.request_status()
+    def mode_changed(self):
+        """Handle mode change"""
+        if self.auto_radio.isChecked():
+            self.current_mode = "AUTO"
         else:
-            self.serial.disconnect()
-            self.connect_btn.setText("Connect")
-            self.connect_btn.setStyleSheet("")
+            self.current_mode = "MANUAL"
+        self.update_control_panel()
 
-    def toggle_mode(self):
-        """Toggle between AUTO and MANUAL mode"""
-        if self.system_status.auto_mode:
-            self.serial.send_command("manual")
-        else:
-            self.serial.send_command("auto")
+    def dropout_selection_changed(self, option, checked):
+        """Handle dropout selection change"""
+        if checked:
+            self.selected_dropout = option
 
     def trigger_estop(self):
         """Trigger emergency stop"""
-        self.serial.send_command("estop")
+        self.arduino.send_command("e_stop")
 
-    def reset_estop(self):
-        """Reset emergency stop"""
-        self.serial.send_command("reset")
+    def begin_auto_treatment(self):
+        """Begin auto treatment process"""
+        self.arduino.send_command("start_process_sm")
 
-    def plasma_on(self):
-        """Turn plasma on"""
-        self.serial.send_command("plasma_on")
+    def exit_process(self):
+        """Exit process mode"""
+        self.arduino.send_command("off")
 
-    def plasma_off(self):
-        """Turn plasma off"""
-        self.serial.send_command("plasma_off")
+    def reset_system(self):
+        """Reset system"""
+        self.arduino.send_command("reset")
 
-    def request_status(self):
-        """Request status update"""
-        if self.serial.connected:
-            self.serial.send_command("getstatus")
-
-    def confirm_exit(self):
-        """Confirm before exiting"""
-        reply = QMessageBox.question(
-            self,
-            'Exit Application',
-            'Are you sure you want to exit?',
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-
-        if reply == QMessageBox.Yes:
-            self.close()
-
-    def keyPressEvent(self, event):
-        """Handle keyboard shortcuts"""
-        # ESC key to exit fullscreen or close
-        if event.key() == Qt.Key_Escape:
-            if self.is_fullscreen:
-                self.showNormal()
-                self.is_fullscreen = False
-            else:
-                self.confirm_exit()
-
-        # F11 to toggle fullscreen
-        elif event.key() == Qt.Key_F11:
-            if self.is_fullscreen:
-                self.showNormal()
-                self.is_fullscreen = False
-            else:
-                self.showFullScreen()
-                self.is_fullscreen = True
-
-        # Ctrl+Q to quit
-        elif event.key() == Qt.Key_Q and event.modifiers() == Qt.ControlModifier:
-            self.confirm_exit()
-
+    def command_up(self):
+        """Command selected dropout(s) up"""
+        if self.selected_dropout == "ALL":
+            self.arduino.send_command("all_up")
         else:
-            super().keyPressEvent(event)
+            self.arduino.send_command(f"{self.selected_dropout}_up")
 
-    def process_status(self, data: dict):
-        """Process status update from Arduino"""
-        try:
-            # E-Stop
-            if 'estop' in data:
-                self.system_status.estop_active = data['estop']
-                if data['estop']:
-                    self.estop_label.setText("● E-STOP")
-                    self.estop_label.setStyleSheet("color: red;")
-                else:
-                    self.estop_label.setText("✓ CLEAR")
-                    self.estop_label.setStyleSheet("color: green;")
+    def command_load(self):
+        """Command selected dropout(s) to load position"""
+        if self.selected_dropout == "ALL":
+            self.arduino.send_command("all_load")
+        else:
+            self.arduino.send_command(f"{self.selected_dropout}_load")
 
-            # Mode
-            if 'auto_mode' in data:
-                self.system_status.auto_mode = data['auto_mode']
-                if data['auto_mode']:
-                    self.mode_label.setText("AUTO")
-                    self.mode_label.setStyleSheet("color: cyan;")
-                else:
-                    self.mode_label.setText("MANUAL")
-                    self.mode_label.setStyleSheet("color: yellow;")
+    def command_down(self):
+        """Command selected dropout(s) down"""
+        if self.selected_dropout == "ALL":
+            self.arduino.send_command("all_down")
+        else:
+            self.arduino.send_command(f"{self.selected_dropout}_down")
 
-            # Plasma
-            if 'plasma_on' in data:
-                if data['plasma_on']:
-                    self.plasma_indicator.setText("●")
-                    self.plasma_indicator.setStyleSheet("color: lime;")
-                else:
-                    self.plasma_indicator.setText("○")
-                    self.plasma_indicator.setStyleSheet("color: gray;")
+    def request_status_update(self):
+        """Request status update from Arduino"""
+        self.arduino.send_command("status")
+        self.arduino.send_command("get_states")
 
-            # Dropouts
-            if 'dropouts' in data:
-                for i, dropout_data in enumerate(data['dropouts']):
-                    if i < 4:
-                        status = DropoutStatus(
-                            state=dropout_data.get('state', 'UNKNOWN'),
-                            arm_state=dropout_data.get('arm', 'UNKNOWN'),
-                            clamp_state=dropout_data.get('clamp', 'UNKNOWN')
-                        )
-                        self.dropout_widgets[i].update_status(status)
+    def handle_serial_data(self, line):
+        """Handle incoming serial data"""
+        self.status.update_from_serial(line)
+        self.update_status_display()
 
-        except Exception as e:
-            print(f"Error processing status: {e}")
+        # Update control panel if process state changed
+        if line in ["OFF", "LOADING", "READY", "TREATING", "UNLOADING", "DROPPING", "RETURNING"]:
+            if self.current_mode == "AUTO":
+                self.update_control_panel()
+
+    def update_status_display(self):
+        """Update status display"""
+        # Process state
+        self.process_state_label.setText(self.status.process_state)
+        state_colors = {
+            "OFF": "gray",
+            "LOADING": "#FF9800",
+            "READY": "#2196F3",
+            "TREATING": "#9C27B0",
+            "UNLOADING": "#FF9800",
+            "DROPPING": "#FF5722",
+            "RETURNING": "#607D8B"
+        }
+        self.process_state_label.setStyleSheet(f"color: {state_colors.get(self.status.process_state, 'gray')};")
+
+        # E-Stop status
+        if self.status.estop_active:
+            self.estop_status_label.setText("ACTIVE")
+            self.estop_status_label.setStyleSheet("color: red;")
+        else:
+            self.estop_status_label.setText("INACTIVE")
+            self.estop_status_label.setStyleSheet("color: green;")
+
+        # Plasma status
+        if self.status.plasma_on:
+            self.plasma_status_label.setText("ON")
+            self.plasma_status_label.setStyleSheet("color: #9C27B0;")
+        else:
+            self.plasma_status_label.setText("OFF")
+            self.plasma_status_label.setStyleSheet("color: gray;")
+
+        # Dropout states
+        for i, label in enumerate(self.dropout_labels):
+            if i < len(self.status.dropout_states):
+                label.setText(self.status.dropout_states[i])
 
     def closeEvent(self, event):
-        """Clean up on close"""
-        if self.serial.connected:
-            self.serial.disconnect()
+        """Handle window close"""
+        if hasattr(self, 'serial_reader'):
+            self.serial_reader.stop()
+            self.serial_reader.wait()
+        self.arduino.close()
         event.accept()
 
 
 def main():
     app = QApplication(sys.argv)
 
-    # Configure for touchscreen
-    app.setAttribute(Qt.AA_SynthesizeTouchForUnhandledMouseEvents, True)
+    # Set application-wide font
+    font = QFont("Arial", 12)
+    app.setFont(font)
 
-    window = TouchControlGUI()
-
-    # Check for fullscreen argument
-    if '--fullscreen' in sys.argv or '-f' in sys.argv:
-        window.showFullScreen()
-        window.is_fullscreen = True
-        # Hide cursor for kiosk mode
-        if '--hide-cursor' in sys.argv:
-            app.setOverrideCursor(Qt.BlankCursor)
-    else:
-        window.show()
+    window = HMIMainWindow()
+    window.showFullScreen()  # Full screen on touch display
 
     sys.exit(app.exec_())
 
