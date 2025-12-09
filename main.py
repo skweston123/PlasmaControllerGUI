@@ -312,6 +312,7 @@ class HMIMainWindow(QMainWindow):
         """Create auto process controls"""
         auto_group = QGroupBox("Auto Process Controls")
         auto_group.setFont(QFont("Arial", 13, QFont.Bold))
+        auto_group.setAlignment(Qt.AlignCenter)
         auto_layout = QVBoxLayout()
         auto_layout.setSpacing(10)
         auto_layout.setContentsMargins(10, 15, 10, 10)
@@ -438,6 +439,7 @@ class HMIMainWindow(QMainWindow):
         """Create manual controls"""
         manual_group = QGroupBox("Manual Controls")
         manual_group.setFont(QFont("Arial", 13, QFont.Bold))
+        manual_group.setAlignment(Qt.AlignCenter)
         manual_layout = QVBoxLayout()
         manual_layout.setSpacing(10)
         manual_layout.setContentsMargins(10, 15, 10, 10)
@@ -446,8 +448,8 @@ class HMIMainWindow(QMainWindow):
         dropout_layout = QHBoxLayout()
         dropout_layout.setSpacing(10)
 
-        self.btn_all_up = QPushButton("All Up")
-        self.btn_all_up.setFont(QFont("Arial", 16, QFont.Bold))
+        self.btn_all_up = QPushButton("Arms Up\nClamps Closed")
+        self.btn_all_up.setFont(QFont("Arial", 15, QFont.Bold))
         self.btn_all_up.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_all_up.setStyleSheet("""
             QPushButton {
@@ -467,8 +469,8 @@ class HMIMainWindow(QMainWindow):
         """)
         self.btn_all_up.clicked.connect(lambda: self.arduino.send_command("all_up"))
 
-        self.btn_all_load = QPushButton("All Load")
-        self.btn_all_load.setFont(QFont("Arial", 16, QFont.Bold))
+        self.btn_all_load = QPushButton("Arms Up\nClamps Open")
+        self.btn_all_load.setFont(QFont("Arial", 15, QFont.Bold))
         self.btn_all_load.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_all_load.setStyleSheet("""
             QPushButton {
@@ -488,8 +490,8 @@ class HMIMainWindow(QMainWindow):
         """)
         self.btn_all_load.clicked.connect(lambda: self.arduino.send_command("all_load"))
 
-        self.btn_all_down = QPushButton("All Down")
-        self.btn_all_down.setFont(QFont("Arial", 16, QFont.Bold))
+        self.btn_all_down = QPushButton("Arms Down\nClamps Open")
+        self.btn_all_down.setFont(QFont("Arial", 15, QFont.Bold))
         self.btn_all_down.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_all_down.setStyleSheet("""
             QPushButton {
@@ -582,11 +584,11 @@ class HMIMainWindow(QMainWindow):
         self.estop_btn.clicked.connect(self.trigger_estop)
         manual_layout.addWidget(self.estop_btn, stretch=1)
 
-        # Reset System button
-        reset_btn = QPushButton("Reset System")
-        reset_btn.setFont(QFont("Arial", 16, QFont.Bold))
-        reset_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        reset_btn.setStyleSheet("""
+        # Reset System button (always enabled, even during e-stop)
+        self.reset_btn = QPushButton("Reset System")
+        self.reset_btn.setFont(QFont("Arial", 16, QFont.Bold))
+        self.reset_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.reset_btn.setStyleSheet("""
             QPushButton {
                 background-color: #ff6600;
                 color: white;
@@ -597,16 +599,34 @@ class HMIMainWindow(QMainWindow):
                 background-color: #cc5200;
             }
         """)
-        reset_btn.clicked.connect(self.reset_system)
-        manual_layout.addWidget(reset_btn, stretch=1)
+        self.reset_btn.clicked.connect(self.reset_system)
+        manual_layout.addWidget(self.reset_btn, stretch=1)
 
         manual_group.setLayout(manual_layout)
         return manual_group
 
     def update_button_states(self):
-        """Update button enabled/disabled states based on auto process state"""
+        """Update button enabled/disabled states based on auto process state and e-stop"""
         process_state = self.status.process_state
+        estop = self.status.estop_active
 
+        # If e-stop is active, disable everything except reset button
+        if estop:
+            self.btn_begin.setEnabled(False)
+            self.btn_part_loaded.setEnabled(False)
+            self.btn_start_treatment.setEnabled(False)
+            self.btn_part_unloaded.setEnabled(False)
+            self.btn_exit_process.setEnabled(False)
+            self.btn_all_up.setEnabled(False)
+            self.btn_all_load.setEnabled(False)
+            self.btn_all_down.setEnabled(False)
+            self.btn_plasma_on.setEnabled(False)
+            self.btn_plasma_off.setEnabled(False)
+            # E-Stop button stays enabled (it's always enabled)
+            # Reset button stays enabled (it's always enabled)
+            return
+
+        # Normal operation - enable/disable based on process state
         # Auto process buttons - enabled based on process state
         if self.in_auto_process:
             # In auto process mode
@@ -616,7 +636,7 @@ class HMIMainWindow(QMainWindow):
             self.btn_part_unloaded.setEnabled(process_state == "UNLOADING")
             self.btn_exit_process.setEnabled(process_state in ["LOADING", "READY"])
 
-            # Manual controls disabled during auto process (except E-Stop)
+            # Manual controls disabled during auto process (except E-Stop and Reset)
             self.btn_all_up.setEnabled(False)
             self.btn_all_load.setEnabled(False)
             self.btn_all_down.setEnabled(False)
