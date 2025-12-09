@@ -422,7 +422,7 @@ class HMIMainWindow(QMainWindow):
         dropout_layout = QHBoxLayout()
         dropout_layout.setSpacing(10)
 
-        self.btn_all_up = QPushButton("All Up")
+        self.btn_all_up = QPushButton("Arms Up, Clamps Closed")
         self.btn_all_up.setFont(QFont("Arial", 16, QFont.Bold))
         self.btn_all_up.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_all_up.setStyleSheet("""
