@@ -2,6 +2,7 @@
 """
 Plasma Treatment System HMI
 PyQt5 interface for Arduino-based industrial control system
+
 """
 
 import sys
