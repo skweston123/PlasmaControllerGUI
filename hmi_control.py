@@ -80,19 +80,27 @@ class ArduinoInterface:
         uart_ports = []
 
         for port in ports:
-            if 'ttyUSB' in port.device or 'ttyACM' in port.device:
+            print(f"Found port: {port.device}")
+            if 'ACM' in port.device or 'USB' in port.device:
                 usb_ports.append(port)
-            elif 'ttyAMA' in port.device or 'ttyS' in port.device:
+                print(f"  -> USB port (priority)")
+            elif 'AMA' in port.device or 'ttyS' in port.device:
                 uart_ports.append(port)
+                print(f"  -> UART port (low priority)")
             else:
-                usb_ports.append(port)  # Default to USB list
+                usb_ports.append(port)
 
-        # Try USB ports first, then UART
+        # Try USB ports first (ACM/USB), then UART (AMA)
         all_ports = usb_ports + uart_ports
+
+        if not all_ports:
+            print("No serial ports found!")
+            self.connected = False
+            return False
 
         for port in all_ports:
             try:
-                print(f"Trying to connect to {port.device}...")
+                print(f"Attempting connection to {port.device}...")
                 # Try to connect to each port
                 # MDuino and industrial controllers may need different settings
                 self.serial_port = serial.Serial(
@@ -106,17 +114,24 @@ class ArduinoInterface:
                 )
                 # Give the controller time to initialize
                 import time
-                time.sleep(2)
+                time.sleep(1)
 
-                # Try to communicate
+                # Test communication
                 self.serial_port.write(b"status\n")
-                time.sleep(0.5)
+                self.serial_port.flush()
+                time.sleep(0.3)
+
+                # Check if we got a response
+                if self.serial_port.in_waiting > 0:
+                    response = self.serial_port.read(self.serial_port.in_waiting)
+                    print(f"  -> Got response: {response[:50]}")
 
                 self.connected = True
-                print(f"Connected to controller on {port.device}")
+                print(f"✓ Connected to controller on {port.device}")
                 return True
+
             except Exception as e:
-                print(f"Failed to connect to {port.device}: {e}")
+                print(f"✗ Failed to connect to {port.device}: {e}")
                 if self.serial_port:
                     try:
                         self.serial_port.close()
@@ -124,7 +139,7 @@ class ArduinoInterface:
                         pass
                     self.serial_port = None
 
-        print("No controller found")
+        print("No controller found on any port")
         self.connected = False
         return False
 
@@ -238,10 +253,10 @@ class HMIMainWindow(QMainWindow):
 
         self.init_ui()
 
-        # Status update timer
+        # Status update timer - reduced frequency
         self.status_timer = QTimer()
         self.status_timer.timeout.connect(self.request_status_update)
-        self.status_timer.start(1000)  # Update every second
+        self.status_timer.start(2000)  # Update every 2 seconds instead of 1
 
     def handle_connection_lost(self):
         """Handle lost connection"""
@@ -795,8 +810,9 @@ class HMIMainWindow(QMainWindow):
     def request_status_update(self):
         """Request status update from Arduino"""
         if self.arduino.connected:
+            # Only send status command - Arduino automatically reports everything
+            # Don't send get_states separately as it's redundant
             self.arduino.send_command("status")
-            self.arduino.send_command("get_states")
 
     def handle_serial_data(self, line):
         """Handle incoming serial data"""
