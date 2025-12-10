@@ -32,20 +32,30 @@ class SerialReader(QThread):
 
         while self.running:
             try:
-                if self.serial_port and self.serial_port.is_open and self.serial_port.in_waiting:
-                    data = self.serial_port.read(self.serial_port.in_waiting).decode('utf-8', errors='ignore')
-                    buffer += data
-                    consecutive_errors = 0  # Reset error counter on successful read
+                if self.serial_port and self.serial_port.is_open:
+                    # Always try to read, even if in_waiting is 0
+                    # Some systems don't report in_waiting correctly
+                    try:
+                        data = self.serial_port.read(max(1, self.serial_port.in_waiting or 1))
+                        if data:
+                            decoded = data.decode('utf-8', errors='ignore')
+                            buffer += decoded
+                            consecutive_errors = 0  # Reset error counter on successful read
 
-                    # Process complete lines
-                    while '\n' in buffer:
-                        line, buffer = buffer.split('\n', 1)
-                        line = line.strip()
-                        if line:
-                            self.data_received.emit(line)
+                            # Process complete lines
+                            while '\n' in buffer:
+                                line, buffer = buffer.split('\n', 1)
+                                line = line.strip()
+                                if line:
+                                    self.data_received.emit(line)
+                        else:
+                            # No data available, brief pause
+                            self.msleep(10)
+                    except Exception as e:
+                        print(f"Read exception: {e}")
+                        self.msleep(50)
                 else:
-                    # Small delay when no data to avoid busy waiting
-                    self.msleep(10)
+                    self.msleep(50)
 
             except Exception as e:
                 consecutive_errors += 1
