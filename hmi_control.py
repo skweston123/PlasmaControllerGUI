@@ -126,7 +126,7 @@ class ArduinoInterface:
                 # MDuino and industrial controllers may need different settings
                 self.serial_port = serial.Serial(
                     port.device,
-                    9600,  # Temporarily back to 9600 for testing
+                    115200,  # Changed back to 115200 to match Arduino
                     timeout=1,
                     write_timeout=1,
                     xonxoff=False,
