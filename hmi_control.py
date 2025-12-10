@@ -112,9 +112,14 @@ class ArduinoInterface:
                     rtscts=False,
                     dsrdtr=False
                 )
-                # Give the controller time to initialize
+
+                # Explicitly disable DTR and RTS to prevent Arduino reset
+                self.serial_port.setDTR(False)
+                self.serial_port.setRTS(False)
+
+                # Give the controller time to initialize (longer delay for MDuino)
                 import time
-                time.sleep(1)
+                time.sleep(3)  # Increased to 3 seconds
 
                 # Test communication
                 self.serial_port.write(b"status\n")
