@@ -75,8 +75,24 @@ class ArduinoInterface:
         """Auto-connect to Arduino on USB port"""
         ports = serial.tools.list_ports.comports()
 
+        # Prefer USB connections over built-in UART
+        usb_ports = []
+        uart_ports = []
+
         for port in ports:
+            if 'ttyUSB' in port.device or 'ttyACM' in port.device:
+                usb_ports.append(port)
+            elif 'ttyAMA' in port.device or 'ttyS' in port.device:
+                uart_ports.append(port)
+            else:
+                usb_ports.append(port)  # Default to USB list
+
+        # Try USB ports first, then UART
+        all_ports = usb_ports + uart_ports
+
+        for port in all_ports:
             try:
+                print(f"Trying to connect to {port.device}...")
                 # Try to connect to each port
                 # MDuino and industrial controllers may need different settings
                 self.serial_port = serial.Serial(
@@ -91,11 +107,22 @@ class ArduinoInterface:
                 # Give the controller time to initialize
                 import time
                 time.sleep(2)
+
+                # Try to communicate
+                self.serial_port.write(b"status\n")
+                time.sleep(0.5)
+
                 self.connected = True
                 print(f"Connected to controller on {port.device}")
                 return True
             except Exception as e:
                 print(f"Failed to connect to {port.device}: {e}")
+                if self.serial_port:
+                    try:
+                        self.serial_port.close()
+                    except:
+                        pass
+                    self.serial_port = None
 
         print("No controller found")
         self.connected = False
@@ -112,8 +139,10 @@ class ArduinoInterface:
                 # Ensure command ends with newline
                 if not command.endswith('\n'):
                     command = command + '\n'
+                print(f"Sending command: {repr(command)}")  # Debug output
                 self.serial_port.write(command.encode('utf-8'))
                 self.serial_port.flush()  # Ensure data is sent immediately
+                print(f"Command sent successfully")  # Debug output
                 return True
         except Exception as e:
             print(f"Send error: {e}")
@@ -524,7 +553,7 @@ class HMIMainWindow(QMainWindow):
                 border: 3px solid #aaaaaa;
             }
         """)
-        self.btn_all_up.clicked.connect(lambda: self.arduino.send_command("all_up"))
+        self.btn_all_up.clicked.connect(lambda: self.command_all_up())
 
         self.btn_all_load = QPushButton("Arms Up\nClamps Open")
         self.btn_all_load.setFont(QFont("Arial", 15, QFont.Bold))
@@ -545,7 +574,7 @@ class HMIMainWindow(QMainWindow):
                 border: 3px solid #aaaaaa;
             }
         """)
-        self.btn_all_load.clicked.connect(lambda: self.arduino.send_command("all_load"))
+        self.btn_all_load.clicked.connect(lambda: self.command_all_load())
 
         self.btn_all_down = QPushButton("Arms Down\nClamps Open")
         self.btn_all_down.setFont(QFont("Arial", 15, QFont.Bold))
@@ -566,7 +595,7 @@ class HMIMainWindow(QMainWindow):
                 border: 3px solid #aaaaaa;
             }
         """)
-        self.btn_all_down.clicked.connect(lambda: self.arduino.send_command("all_down"))
+        self.btn_all_down.clicked.connect(lambda: self.command_all_down())
 
         dropout_layout.addWidget(self.btn_all_up)
         dropout_layout.addWidget(self.btn_all_load)
@@ -714,6 +743,30 @@ class HMIMainWindow(QMainWindow):
             self.btn_plasma_on.setEnabled(True)
             self.btn_plasma_off.setEnabled(True)
 
+    def command_all_up(self):
+        """Command all dropouts up"""
+        print("Button pressed: Arms Up / Clamps Closed")
+        if not self.arduino.connected:
+            QMessageBox.warning(self, "Not Connected", "Controller not connected.")
+            return
+        self.arduino.send_command("all_up")
+
+    def command_all_load(self):
+        """Command all dropouts to load"""
+        print("Button pressed: Arms Up / Clamps Open")
+        if not self.arduino.connected:
+            QMessageBox.warning(self, "Not Connected", "Controller not connected.")
+            return
+        self.arduino.send_command("all_load")
+
+    def command_all_down(self):
+        """Command all dropouts down"""
+        print("Button pressed: Arms Down / Clamps Open")
+        if not self.arduino.connected:
+            QMessageBox.warning(self, "Not Connected", "Controller not connected.")
+            return
+        self.arduino.send_command("all_down")
+
     def trigger_estop(self):
         """Trigger emergency stop"""
         self.arduino.send_command("e_stop")
@@ -748,6 +801,7 @@ class HMIMainWindow(QMainWindow):
     def handle_serial_data(self, line):
         """Handle incoming serial data"""
         try:
+            print(f"Received: {repr(line)}")  # Debug output
             self.status.update_from_serial(line)
             self.update_status_display()
 
