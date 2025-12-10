@@ -26,19 +26,28 @@ class SerialReader(QThread):
         self.running = True
 
     def run(self):
+        print("SerialReader thread started!")
         buffer = ""
         consecutive_errors = 0
         max_errors = 5
+        read_count = 0
 
         while self.running:
+            read_count += 1
+            if read_count % 100 == 0:
+                print(f"SerialReader: still running, read cycle {read_count}")
+
             try:
                 if self.serial_port and self.serial_port.is_open:
                     # Always try to read, even if in_waiting is 0
                     # Some systems don't report in_waiting correctly
                     try:
-                        data = self.serial_port.read(max(1, self.serial_port.in_waiting or 1))
+                        waiting = self.serial_port.in_waiting
+                        to_read = max(1, waiting or 1)
+                        data = self.serial_port.read(to_read)
                         if data:
                             decoded = data.decode('utf-8', errors='ignore')
+                            print(f"SerialReader got data: {repr(decoded)}")
                             buffer += decoded
                             consecutive_errors = 0  # Reset error counter on successful read
 
@@ -47,6 +56,7 @@ class SerialReader(QThread):
                                 line, buffer = buffer.split('\n', 1)
                                 line = line.strip()
                                 if line:
+                                    print(f"SerialReader emitting: {repr(line)}")
                                     self.data_received.emit(line)
                         else:
                             # No data available, brief pause
@@ -55,6 +65,7 @@ class SerialReader(QThread):
                         print(f"Read exception: {e}")
                         self.msleep(50)
                 else:
+                    print("SerialReader: serial port not open!")
                     self.msleep(50)
 
             except Exception as e:
@@ -258,10 +269,14 @@ class HMIMainWindow(QMainWindow):
 
         # Start serial reader thread if connected
         if self.arduino.connected and self.arduino.serial_port:
+            print(f"Starting SerialReader thread for {self.arduino.serial_port.port}")
             self.serial_reader = SerialReader(self.arduino.serial_port)
             self.serial_reader.data_received.connect(self.handle_serial_data)
             self.serial_reader.connection_lost.connect(self.handle_connection_lost)
             self.serial_reader.start()
+            print("SerialReader thread start() called")
+        else:
+            print("WARNING: Not starting SerialReader - no connection!")
 
         # Track if in auto process mode
         self.in_auto_process = False
