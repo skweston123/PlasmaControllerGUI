@@ -2,7 +2,6 @@
 """
 Plasma Treatment System HMI
 PyQt5 interface for Arduino-based industrial control system
-
 """
 
 import sys
@@ -27,16 +26,12 @@ class SerialReader(QThread):
         self.running = True
 
     def run(self):
-        print("SerialReader thread started!")
+        print("SerialReader thread started")
         buffer = ""
         consecutive_errors = 0
         max_errors = 5
-        read_count = 0
 
         while self.running:
-            read_count += 1
-            if read_count % 100 == 0:
-                print(f"SerialReader: still running, read cycle {read_count}")
 
             try:
                 if self.serial_port and self.serial_port.is_open:
@@ -48,7 +43,8 @@ class SerialReader(QThread):
                         data = self.serial_port.read(to_read)
                         if data:
                             decoded = data.decode('utf-8', errors='ignore')
-                            print(f"SerialReader got data: {repr(decoded)}")
+                            # Remove debug print for production
+                            # print(f"SerialReader got data: {repr(decoded)}")
                             buffer += decoded
                             consecutive_errors = 0  # Reset error counter on successful read
 
@@ -57,17 +53,28 @@ class SerialReader(QThread):
                                 line, buffer = buffer.split('\n', 1)
                                 line = line.strip()
                                 if line:
-                                    print(f"SerialReader emitting: {repr(line)}")
+                                    # Remove debug print for production
+                                    # print(f"SerialReader emitting: {repr(line)}")
                                     self.data_received.emit(line)
                         else:
                             # No data available, brief pause
                             self.msleep(10)
+                    except (OSError, serial.SerialException) as e:
+                        # These exceptions indicate the device was unplugged
+                        print(f"Serial device disconnected: {e}")
+                        self.connection_lost.emit()
+                        break
                     except Exception as e:
                         print(f"Read exception: {e}")
+                        consecutive_errors += 1
+                        if consecutive_errors >= max_errors:
+                            self.connection_lost.emit()
+                            break
                         self.msleep(50)
                 else:
                     print("SerialReader: serial port not open!")
-                    self.msleep(50)
+                    self.connection_lost.emit()
+                    break
 
             except Exception as e:
                 consecutive_errors += 1
@@ -201,6 +208,7 @@ class ArduinoInterface:
             print(f"Error closing serial port: {e}")
         finally:
             self.connected = False
+            self.serial_port = None
 
 
 class SystemStatus:
@@ -284,16 +292,44 @@ class HMIMainWindow(QMainWindow):
 
         self.init_ui()
 
-        # Status update timer - reduced frequency
+        # Status update timer
         self.status_timer = QTimer()
         self.status_timer.timeout.connect(self.request_status_update)
         self.status_timer.start(2000)  # Update every 2 seconds instead of 1
 
+        # Reconnection timer - checks for lost connection and attempts reconnect
+        self.reconnect_timer = QTimer()
+        self.reconnect_timer.timeout.connect(self.check_and_reconnect)
+        self.reconnect_timer.start(5000)  # Check every 5 seconds
+
     def handle_connection_lost(self):
         """Handle lost connection"""
+        print("Connection lost detected!")
         self.arduino.connected = False
-        QMessageBox.warning(self, "Connection Lost",
-                            "Lost connection to Arduino. Please check connection and restart.")
+        if self.serial_reader:
+            self.serial_reader.stop()
+            self.serial_reader = None
+        # Don't show message box - will auto-reconnect
+
+    def check_and_reconnect(self):
+        """Periodically check connection and attempt reconnect if needed"""
+        if not self.arduino.connected:
+            print("Connection lost - attempting to reconnect...")
+
+            # Try to reconnect
+            if self.arduino.connect():
+                print("Reconnected successfully!")
+
+                # Restart serial reader thread
+                if self.arduino.serial_port:
+                    print(f"Starting SerialReader thread for {self.arduino.serial_port.port}")
+                    self.serial_reader = SerialReader(self.arduino.serial_port)
+                    self.serial_reader.data_received.connect(self.handle_serial_data)
+                    self.serial_reader.connection_lost.connect(self.handle_connection_lost)
+                    self.serial_reader.start()
+                    print("SerialReader thread restarted")
+            else:
+                print("Reconnection failed - will retry in 5 seconds")
 
     def init_ui(self):
         """Initialize UI"""
