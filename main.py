@@ -27,11 +27,15 @@ class SerialReader(QThread):
 
     def run(self):
         buffer = ""
+        consecutive_errors = 0
+        max_errors = 5
+
         while self.running:
             try:
                 if self.serial_port and self.serial_port.is_open and self.serial_port.in_waiting:
                     data = self.serial_port.read(self.serial_port.in_waiting).decode('utf-8', errors='ignore')
                     buffer += data
+                    consecutive_errors = 0  # Reset error counter on successful read
 
                     # Process complete lines
                     while '\n' in buffer:
@@ -39,10 +43,21 @@ class SerialReader(QThread):
                         line = line.strip()
                         if line:
                             self.data_received.emit(line)
+                else:
+                    # Small delay when no data to avoid busy waiting
+                    self.msleep(10)
+
             except Exception as e:
-                print(f"Serial read error: {e}")
-                self.connection_lost.emit()
-                break
+                consecutive_errors += 1
+                print(f"Serial read error ({consecutive_errors}/{max_errors}): {e}")
+
+                if consecutive_errors >= max_errors:
+                    print("Too many consecutive errors, connection lost")
+                    self.connection_lost.emit()
+                    break
+                else:
+                    # Brief pause before retry
+                    self.msleep(100)
 
     def stop(self):
         self.running = False
@@ -63,14 +78,26 @@ class ArduinoInterface:
         for port in ports:
             try:
                 # Try to connect to each port
-                self.serial_port = serial.Serial(port.device, 9600, timeout=1)
+                # MDuino and industrial controllers may need different settings
+                self.serial_port = serial.Serial(
+                    port.device,
+                    9600,
+                    timeout=1,
+                    write_timeout=1,
+                    xonxoff=False,
+                    rtscts=False,
+                    dsrdtr=False
+                )
+                # Give the controller time to initialize
+                import time
+                time.sleep(2)
                 self.connected = True
-                print(f"Connected to Arduino on {port.device}")
+                print(f"Connected to controller on {port.device}")
                 return True
             except Exception as e:
                 print(f"Failed to connect to {port.device}: {e}")
 
-        print("No Arduino found")
+        print("No controller found")
         self.connected = False
         return False
 
@@ -82,7 +109,11 @@ class ArduinoInterface:
 
         try:
             if self.serial_port.is_open:
-                self.serial_port.write(f"{command}\n".encode())
+                # Ensure command ends with newline
+                if not command.endswith('\n'):
+                    command = command + '\n'
+                self.serial_port.write(command.encode('utf-8'))
+                self.serial_port.flush()  # Ensure data is sent immediately
                 return True
         except Exception as e:
             print(f"Send error: {e}")
@@ -474,7 +505,7 @@ class HMIMainWindow(QMainWindow):
         dropout_layout = QHBoxLayout()
         dropout_layout.setSpacing(10)
 
-        self.btn_all_up = QPushButton("Arms Up &\nClamps Closed")
+        self.btn_all_up = QPushButton("Arms Up\nClamps Closed")
         self.btn_all_up.setFont(QFont("Arial", 15, QFont.Bold))
         self.btn_all_up.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_all_up.setStyleSheet("""
@@ -495,7 +526,7 @@ class HMIMainWindow(QMainWindow):
         """)
         self.btn_all_up.clicked.connect(lambda: self.arduino.send_command("all_up"))
 
-        self.btn_all_load = QPushButton("Arms Up &\nClamps Open")
+        self.btn_all_load = QPushButton("Arms Up\nClamps Open")
         self.btn_all_load.setFont(QFont("Arial", 15, QFont.Bold))
         self.btn_all_load.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_all_load.setStyleSheet("""
@@ -516,7 +547,7 @@ class HMIMainWindow(QMainWindow):
         """)
         self.btn_all_load.clicked.connect(lambda: self.arduino.send_command("all_load"))
 
-        self.btn_all_down = QPushButton("Arms Down &\nClamps Open")
+        self.btn_all_down = QPushButton("Arms Down\nClamps Open")
         self.btn_all_down.setFont(QFont("Arial", 15, QFont.Bold))
         self.btn_all_down.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.btn_all_down.setStyleSheet("""
