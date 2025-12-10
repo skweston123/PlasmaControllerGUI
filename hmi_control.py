@@ -105,7 +105,7 @@ class ArduinoInterface:
                 # MDuino and industrial controllers may need different settings
                 self.serial_port = serial.Serial(
                     port.device,
-                    115200,  # Increased from 9600 to 115200
+                    9600,  # Temporarily back to 9600 for testing
                     timeout=1,
                     write_timeout=1,
                     xonxoff=False,
@@ -154,11 +154,10 @@ class ArduinoInterface:
                 # Ensure command ends with newline
                 if not command.endswith('\n'):
                     command = command + '\n'
-                # Debug output (comment out for production)
-                # print(f"Sending command: {repr(command)}")
+                # Debug output - show exactly what we're sending
+                print(f"TX: {repr(command)} = {command.encode('utf-8').hex()}")
                 self.serial_port.write(command.encode('utf-8'))
                 self.serial_port.flush()  # Ensure data is sent immediately
-                # print(f"Command sent successfully")
                 return True
         except Exception as e:
             print(f"Send error: {e}")
@@ -818,8 +817,8 @@ class HMIMainWindow(QMainWindow):
     def handle_serial_data(self, line):
         """Handle incoming serial data"""
         try:
-            # Debug output (comment out for production)
-            # print(f"Received: {repr(line)}")
+            # Debug output - show exactly what we're receiving
+            print(f"RX: {repr(line)} = {line.encode('utf-8').hex()}")
             self.status.update_from_serial(line)
             self.update_status_display()
 
